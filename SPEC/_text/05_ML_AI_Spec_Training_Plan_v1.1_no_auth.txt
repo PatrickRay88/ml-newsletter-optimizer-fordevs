@@ -1,0 +1,56 @@
+Email Autopilot — ML/AI Specification & Training Plan
+Version: 1.0 | Date: 2026-01-30 | Project: Email Autopilot (Resend-powered)
+1. ML Modules (MVP + Optional)
+MVP ML (choose at least one)
+Send-Time Optimization (recommended): choose best send time per contact/segment to maximize click probability.
+List Hygiene Scoring: predict bounce/low-engagement risk and suppress/throttle.
+Optional ML (if time)
+Auto Segmentation: clustering/RFM-based segment discovery.
+Bandit Variant Selection: Thompson sampling for subject/template variant allocation.
+2. Data Required
+3. Send-Time Optimization Details
+3.1 Baseline (v1 - Shippable fast)
+Compute a per-segment hour-of-week click histogram from historical clicked messages.
+For each contact, maintain a histogram; for cold-start, shrink toward segment/global histogram (Bayesian smoothing).
+Choose send time as argmax expected click probability subject to throttling constraints.
+3.2 Upgrade (v2 - Optional)
+Train a logistic regression model with features: hour-of-week, days since last click, lifecycle state, email frequency in last 48h, segment id.
+Predict click probability; choose time maximizing expected value.
+Evaluation
+Offline: compare predicted best hour vs true preferred window (synthetic ground truth).
+Online (demo): randomize 50/50 between baseline schedule vs optimizer and report CTR uplift with confidence interval (bootstrap).
+4. Hygiene Scoring Details
+Label targets: hard bounce (1) vs not (0). For class demo, use resend.dev bounced inbox outcomes and synthetic risk labels.
+Features: prior bounce, delivered-not-clicked count, days since last engagement, domain category.
+Model: logistic regression or gradient boosting; store risk score per contact nightly.
+Policy: suppress if risk > threshold; throttle cold segments.
+Evaluation
+ROC-AUC on synthetic holdout set.
+Reduction in observed bounces (from resend.dev bounced outcomes) when suppression enabled.
+5. Auto Segmentation (Optional)
+Feature vector per contact: recency/frequency of events, click recency, top feature counts.
+Clustering: k-means or HDBSCAN; store cluster_id as auto segment membership.
+Interpretation: label clusters by top features and recency patterns.
+6. Bandit Variant Selection (Optional)
+Use Thompson Sampling: Beta(alpha, beta) per variant; update on clicks.
+Allocate traffic proportionally to sampled success rates.
+Track regret and cumulative CTR.
+7. Training & Deployment
+Nightly job trains/refreshes models and writes ModelVersion metrics to DB (single demo workspace).
+Inference happens at scheduling time (choose send time, variant, suppression).
+All decisions are logged for explainability.
+8. Future Enhancements (Dev/Data Scientist UX)
+- Add a "Model options" panel for power users to toggle model variants (send-time v1/v2, hygiene scoring, experiments).
+- Keep the default path simple; gate advanced options behind an "Advanced" toggle or Dev utilities.
+Copilot: Implement send-time optimizer v1
+Copilot Prompt (paste as-is):
+Implement a send-time optimizer in TypeScript that:
+1) Computes hour-of-week click histograms per segment and globally from MessageOutcome.clicked_at.
+2) Maintains a per-contact histogram when available; otherwise shrink to segment/global via Bayesian smoothing.
+3) Provides function recommendSendTime(contactId, segmentId, now) -> Date.
+4) Respects throttling: do not schedule if contact received an email in last 24 hours.
+Also write unit tests using deterministic synthetic data.
+Contacts | email, timezone, tags, lifecycle label, propensity (synthetic)
+Events | event_name, timestamp, properties (synthetic or from demo app)
+Messages | sent_at, campaign/flow step, variant
+Outcomes | delivered_at, bounced_at, clicked_at (clicked synthetic), complaint/suppression (optional)

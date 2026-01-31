@@ -1,0 +1,29 @@
+# Email Autopilot Copilot Instructions
+
+- **Scope**: Single demo workspace, no auth, deterministic synthetic data; keep every workflow Test Mode-friendly per SPEC/01_Project_Overview_Requirements_v1.1_no_auth.docx.
+- **Primary Stack**: Next.js App Router + TypeScript, Prisma ORM on PostgreSQL, Resend API integrations per SPEC/03_Technical_Architecture_Integration_v1.1_no_auth.docx.
+- **Project Layout**: Follow the structure outlined in SPEC/07_Copilot_Instructions_v1.0_no_auth.docx (app/, app/api/, prisma/, scripts/, lib/).
+- **Environment Bootstrapping**: Expect `npm install`, `npm run dev`, Dockerized Postgres, and Prisma migrations as first-class tasks (backlog T-01, T-02).
+- **Configuration**: Require DATABASE_URL, APP_BASE_URL, optional APP_ENCRYPTION_KEY; never log or expose the stored Resend key.
+- **Settings Storage**: Keep a single Settings row with encrypted Resend API key and mode flag; all mail-sending reads this row.
+- **Onboarding Flow**: Implement 4 checklist steps (Connect Resend, Choose Mode, Optional Webhooks, Send Test) with persisted completion per SPEC/02_UI_UX_Customer_Flow_v1.1_no_auth.docx.
+- **Resend Key Test**: `/api/integrations/resend/test` must surface precise failure reasons, no key logging, idempotent success caching (T-04).
+- **Test Mode Contacts**: `/api/test/create-list` generates labeled resend.dev addresses; enforce unique Contact.email index to guarantee idempotency.
+- **Broadcast Sending**: `/api/broadcasts` + `/api/broadcasts/:id/send` writes Messages with stored `resend_message_id`; schedule via Resend send endpoint and record timelines.
+- **Outcome Polling**: `/api/jobs/poll-email-status` polls Resend retrieve-email for last_event, writes MessageOutcome terminal states idempotently, and retries with backoff (T-08).
+- **Webhooks**: Optional `/webhooks/resend`; verify signature with stored secret, treat duplicate deliveries safely (SPEC/03_Technical_Architecture_Integration_v1.1_no_auth.docx).
+- **Data Model Essentials**: Tables required upfront: settings, contacts, segments, segment_memberships, templates, broadcasts, messages, message_outcomes, events, suppression (SPEC/03...).
+- **Deterministic Synthetic Data**: `scripts/generate_synthetic_data.ts` seeds contacts, events, and MessageOutcome.clicked_at using fixed RNG seed (SPEC/04_Testing_Plan_Synthetic_Data_v1.1_no_auth.docx).
+- **ML Priority**: Ship send-time optimizer v1 before hygiene scoring; compute hour-of-week histograms, apply Bayesian smoothing, throttle if last send <24h (SPEC/05_ML_AI_Spec_Training_Plan_v1.1_no_auth.docx).
+- **Explainability**: Persist optimizer decisions (chosen window, probabilities) so UI can justify recommendations (SPEC/05...).
+- **Jobs Cadence**: Run poller every 2–5 minutes, nightly jobs for segments recompute, synthetic data refresh, and model retraining (SPEC/03...).
+- **UI Modules**: Build sidebar pages for Home dashboard, Onboarding, Contacts, Segments, Flows, Broadcasts, Deliverability, Settings, Dev utilities (SPEC/02...).
+- **Dashboard Metrics**: Surface sends/delivered/bounced/suppressed, synthetic clicks, and CTR uplift vs baseline split (SPEC/02 and SPEC/04).
+- **Synthetic Click Model**: `click_prob = propensity × segment_factor × time_factor × fatigue_factor`; clicks occur at sent_at + deterministic offset (SPEC/04...).
+- **Testing Strategy**: Cover API routes with unit/integration tests using mocked Resend client and seeded data; include manual checklist mirroring SPEC/04 test cases.
+- **Idempotency Rules**: Endpoint reruns (create list, resend webhooks, polling) must not duplicate rows; rely on DB constraints + UPSERT logic (SPEC/06_Task_List_Backlog_v1.0_no_auth.docx).
+- **Developer Utilities**: `/dev` page should trigger Create Test List, Send Test Broadcast, Polling Job, Synthetic Generator, Model Training and display responses (SPEC/06...).
+- **Logging**: Log operational summaries only; redact secrets and personally identifiable data.
+- **Prompts**: When delegating to copilots, reuse the exact prompts stored in SPEC/07_Copilot_Instructions_v1.0_no_auth.docx for schema, list creation, polling, and optimizer modules.
+- **Deployment Assumption**: Local-first demo; any hosting must keep secrets via environment variables and respect Test Mode limitations.
+- **Completion Definition**: Demo script must walk operator through onboarding -> send -> observe -> report uplift using synthetic data (SPEC/01...).

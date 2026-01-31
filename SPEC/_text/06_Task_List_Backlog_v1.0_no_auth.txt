@@ -1,0 +1,233 @@
+Email Autopilot — Implementation Task List
+Version 1.0 | Date: 2026-01-30 | Scope: No-auth, single demo workspace
+How to use this backlog
+This backlog is ordered in the recommended build sequence. Each ticket includes goal, dependencies, tasks, and acceptance criteria. Complete tickets in order to avoid integration dead-ends. The MVP is demoable after Ticket 8.
+Milestones
+M1 (Send + Observe): Tickets 1–8
+M2 (Synthetic Engagement + Reporting): Tickets 9–12
+M3 (ML Autopilot): Tickets 13–16
+M4 (Polish + Paper Outputs): Tickets 17–19
+T-01 — Repo bootstrap + env + local DB
+Goal: Create a runnable dev environment (Next.js + Postgres + Prisma) with one-command startup.
+Dependencies: None
+Implementation Tasks:
+Initialize Next.js (TypeScript) project structure
+Add Docker Compose for Postgres
+Add Prisma + initial migration scaffold
+Add .env.example with required variables
+Add basic health check page and API route
+Acceptance Criteria:
+`npm run dev` starts the app without errors
+Postgres runs locally and Prisma can connect
+A health endpoint returns OK and includes DB connectivity check
+Notes: Keep it single-demo-workspace; no auth.
+T-02 — Prisma schema v1 + migrations
+Goal: Create the minimum database schema needed for sending, outcomes, segments, synthetic clicks, and settings.
+Dependencies: T-01
+Implementation Tasks:
+Define Settings table (single row), Contacts, Segments, SegmentMembership, Templates, Broadcasts, Messages, MessageOutcome, Events, Suppression
+Add indexes: Contact(email), Message(resend_message_id), Event(external_user_id,timestamp)
+Generate and apply migration
+Add seed script: creates 5 default templates and a sample segment
+Acceptance Criteria:
+Migration applies cleanly on empty DB
+Seed creates templates and sample data
+Prisma client can create/query each core table
+T-03 — Settings UI (Resend key storage)
+Goal: Implement Settings page to store Resend API key and choose Test Mode / Production Mode.
+Dependencies: T-02
+Implementation Tasks:
+Create /settings UI with API key input (masked) and mode toggle
+Implement /api/settings GET/PUT (stores encrypted key or at minimum server-side only)
+Show connection status indicator
+Acceptance Criteria:
+API key can be saved and retrieved (masked)
+Mode toggle persists (Test Mode default)
+Settings page shows clear status
+T-04 — Resend connection test endpoint
+Goal: Verify API key is valid and show a clear success/failure state in the UI.
+Dependencies: T-03
+Implementation Tasks:
+Implement /api/integrations/resend/test that calls a safe Resend endpoint
+Return structured error messages for invalid key / network issues
+Wire Settings UI 'Test Connection' button to this endpoint
+Acceptance Criteria:
+Invalid key returns user-friendly error
+Valid key returns success state in UI
+No key is logged to console/server logs
+T-05 — Onboarding wizard page (no-auth)
+Goal: Create an onboarding checklist that guides the demo operator through setup and test sending.
+Dependencies: T-03, T-04
+Implementation Tasks:
+Create /onboarding page with 4 steps: Connect Resend, Choose Mode, (Optional) Webhooks, Send a Test
+Persist step completion in DB (or derived status)
+Add CTA buttons linking to each step action
+Acceptance Criteria:
+Onboarding page reflects saved state after refresh
+Each step has a clear success indicator
+Test Mode messaging is explicit (no domain required)
+T-06 — Create Test List (resend.dev)
+Goal: Generate a repeatable test contact list using resend.dev test inboxes and labels.
+Dependencies: T-02
+Implementation Tasks:
+Implement /api/test/create-list that creates contacts
+Generate labeled emails: delivered+001@resend.dev.., bounced+001@resend.dev.., suppressed+001@resend.dev.. (optionally complained)
+Tag contacts by expected outcome
+Idempotent: running twice should not duplicate contacts
+Acceptance Criteria:
+Creates expected number of contacts (configurable)
+Contacts have tags/status and show up in Contacts UI
+Re-running does not create duplicates
+Notes: This enables demo without a verified sending domain.
+T-07 — Broadcast send (Test Mode)
+Goal: Send a basic broadcast to a segment/list using Resend API and store message IDs.
+Dependencies: T-02, T-04, T-06
+Implementation Tasks:
+Implement /api/broadcasts create + /api/broadcasts/:id/send
+Select 'All contacts' segment by default
+Call Resend send email endpoint for each recipient (or batch if supported)
+Store resend_message_id and sent_at
+Acceptance Criteria:
+Broadcast results in Messages rows for recipients
+Each message has a resend_message_id
+UI shows 'Sent' count after send completes
+T-08 — Outcome tracking v1 via polling (no webhooks)
+Goal: Record delivered/bounced/failed outcomes by polling Resend retrieve-email endpoint for each message.
+Dependencies: T-07
+Implementation Tasks:
+Implement /api/jobs/poll-email-status
+Poll recently sent messages for up to N minutes; update MessageOutcome with last_event terminal states
+Add retry/backoff and idempotent updates
+Show a simple timeline in UI (Sent -> Delivered/Bounced/Failed)
+Acceptance Criteria:
+Delivered and bounced outcomes are recorded for test inboxes
+Polling job can be triggered manually from UI (for demo)
+No duplicate outcomes; updates are idempotent
+Notes: This is your first demo milestone: send + observe without webhooks.
+T-09 — Contacts UI + CSV import
+Goal: Provide a Contacts page with import and basic filtering (tags/status).
+Dependencies: T-02, T-06
+Implementation Tasks:
+Create /contacts UI listing contacts and key fields
+Add CSV import endpoint /api/contacts/import
+Add filters: tag, status, timezone
+Acceptance Criteria:
+Test list contacts display correctly
+CSV import works for simple columns: email, timezone(optional), tags(optional)
+T-10 — Segments v1 (rule-based)
+Goal: Create a simple segment rule builder and materialize segment membership.
+Dependencies: T-02, T-09
+Implementation Tasks:
+Implement Segments UI with filters (tag/status/timezone/last_click)
+Implement /api/segments and /api/segments/recompute
+Materialize memberships into SegmentMembership table
+Acceptance Criteria:
+Segment size updates correctly after recompute
+Broadcast can target a chosen segment
+T-11 — Template library v1 (no editor)
+Goal: Ship 5 minimal HTML templates with variables; allow selecting template for a broadcast.
+Dependencies: T-02, T-07
+Implementation Tasks:
+Create /templates list page (view only)
+Seed default templates: Welcome, Reminder, Feature, Weekly, Winback
+Broadcast send uses selected template
+Acceptance Criteria:
+Templates exist in DB from seed
+Broadcast can select a template and sends successfully
+T-12 — Synthetic engagement generator (clicks)
+Goal: Generate synthetic click events/outcomes for ML and uplift reporting.
+Dependencies: T-02, T-07
+Implementation Tasks:
+Create script: scripts/generate_synthetic_data.ts
+Generate contact propensity, preferred send windows, and product events
+After a broadcast, generate clicked_at values deterministically with a fixed seed
+Store clicks in MessageOutcome.clicked_at
+Acceptance Criteria:
+Running generator produces reproducible clicks (same seed => same results)
+Dashboard displays synthetic CTR per broadcast/segment
+T-13 — Dashboard metrics + baseline comparison
+Goal: Show uplift vs baseline scheduling using synthetic clicks.
+Dependencies: T-08, T-12
+Implementation Tasks:
+Home dashboard shows sends/delivered/bounced/clicked
+Implement baseline mode: schedule all emails at a fixed time
+Implement comparison: Optimized vs Baseline CTR
+Add bootstrap confidence intervals for uplift
+Acceptance Criteria:
+Dashboard shows CTR uplift and is reproducible across runs
+Baseline vs optimized split is visible (50/50 or per-broadcast toggle)
+T-14 — ML v1 — Send-time optimizer
+Goal: Implement the send-time recommendation engine and scheduling.
+Dependencies: T-12, T-13
+Implementation Tasks:
+Compute hour-of-week click histograms globally and per segment
+Apply Bayesian smoothing for cold contacts
+Provide recommendSendTime(contactId, segmentId, now)
+Scheduling uses recommended time when enabled
+Log decisions for explainability
+Acceptance Criteria:
+With optimizer ON, synthetic CTR improves over baseline
+Recommendations are stable and explainable (show top window)
+T-15 — ML v2 — Hygiene risk scoring (optional)
+Goal: Train a simple model to suppress likely bounces and show bounce reduction.
+Dependencies: T-08
+Implementation Tasks:
+Create features from history (bounce counts, engagement recency, domain)
+Train logistic regression or gradient boosting (Python or TS)
+Store risk_score per contact nightly
+Suppress if risk > threshold; show suppressed count
+Acceptance Criteria:
+Suppression reduces observed bounces in test runs
+Contacts UI shows risk score + suppression reason
+T-16 — Flows v1 (trigger + delay + send)
+Goal: Implement a minimal automation/flow engine for lifecycle emails.
+Dependencies: T-02, T-10, T-11
+Implementation Tasks:
+Create a Flow with steps: trigger event, delay, segment filter, template
+Job runner schedules messages when events arrive
+UI to view flow steps and runs
+Acceptance Criteria:
+Posting an event causes flow messages to be scheduled/sent
+Flow respects suppression and send-time optimization toggles
+T-17 — Optional: Webhooks integration
+Goal: Replace/augment polling with webhooks for real-time outcomes.
+Dependencies: T-05
+Implementation Tasks:
+Add /webhooks/resend endpoint
+Verify signature when enabled
+Update outcomes and suppression in real time
+UI heartbeat: last webhook received
+Acceptance Criteria:
+Webhook events update outcomes without polling
+Replayed webhook does not duplicate outcomes (idempotent)
+T-18 — Experimentation (optional bandit)
+Goal: Add subject-line variants and Thompson sampling allocation.
+Dependencies: T-12
+Implementation Tasks:
+Allow 2-3 subject variants per broadcast
+Track clicks per variant
+Implement Thompson sampling to allocate traffic
+Display winner confidence + lift
+Acceptance Criteria:
+Variant allocations shift toward better variant over time
+UI shows clear experiment results
+T-19 — Paper + final demo assets
+Goal: Produce the deliverables required for Data Mining 2: methodology, dataset, evaluation, screenshots.
+Dependencies: T-13, T-14 (and/or T-15)
+Implementation Tasks:
+Export dataset summary tables (contacts/events/messages/outcomes)
+Produce evaluation plots (CTR over time, uplift CI, bounce rate)
+Capture screenshots of onboarding, dashboard, segments, ML toggles
+Write a concise final report section outline
+Acceptance Criteria:
+You can present a reproducible demo with synthetic data
+Report includes data mining method + evaluation + limitations
+Copilot Prompt: Create a development checklist page
+Copilot Prompt (paste as-is):
+Create a '/dev' page that lists internal actions for demos:
+- Create Test List
+- Send Test Broadcast
+- Run Polling Job Now
+- Run Synthetic Click Generator Now
+- Train ML Models Now
+Each action calls an API route and displays success/error output.

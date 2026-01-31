@@ -1,0 +1,48 @@
+Email Autopilot — Project Overview & Requirements
+Version: 1.0 | Date: 2026-01-30 | Project: Email Autopilot (Resend-powered)
+1. Purpose
+Build a lightweight, developer-friendly email lifecycle + broadcast product for a Data Mining 2 class project. The product uses Resend as the email delivery engine but adds the 'brain' layer: segmentation, send-time optimization, list hygiene scoring, and experiment selection. The deliverable is a working web app (MVP) that can be demoed using test-mode email addresses and synthetic engagement data (no real customers required).
+2. Target User & Value Proposition
+3. Product Principles
+API-first: everything doable via API and minimal UI.
+Opinionated: ship a small set of great flows/templates (no drag-and-drop editor).
+Measurable: show uplift (CTR or conversion) vs a baseline schedule/variant.
+Safe testing: support 'Test Mode' with resend.dev test inboxes and synthetic engagement.
+Transparent ML: show why a decision was made (recommended time, suppression reason, segment membership).
+4. Scope
+4.1 Must-Have (MVP)
+Resend connect flow (API key) with 'Test Connection'
+Send email via Resend to a list/segment
+Contacts (manual add + CSV import)
+Segments (rule-based)
+Flows (simple trigger + delay + send)
+Outcomes tracking in-app (delivered/bounced at minimum) using either webhook or polling
+ML v1: Send-time optimization OR Hygiene scoring (at least one real ML component)
+Dashboard with: sends, delivered, bounces, synthetic clicks, and 'uplift vs baseline'
+Test Mode: create a demo list using resend.dev test inbox addresses (with labels)
+4.2 Should-Have (if time)
+ML v2: Hygiene scoring (bounce-risk suppression)
+Variant experiments (A/B) with optional bandit allocation
+Auto segments (clustering/RFM)
+Webhook verification/signature checking
+4.3 Out of Scope
+Billing/subscription management
+Full WYSIWYG email editor
+Inbox placement measurement (beyond proxy metrics like bounces)
+Enterprise features (SSO, RBAC, audit trails)
+5. Success Criteria (Demo)
+Operator can connect Resend and send a test broadcast to a generated test list (single demo workspace).
+App shows delivery status and bounce/suppression outcomes.
+App runs at least one ML-driven decision (send-time or suppression) and reports an uplift vs baseline using synthetic engagement.
+Onboarding story is coherent: Connect -> Test -> Send -> Observe -> Improve.
+Copilot: Generate the project README
+Copilot Prompt (paste as-is):
+You are a senior full-stack engineer.
+Write a README for a project called 'Email Autopilot' that uses Resend for sending emails.
+Include: goals, architecture overview, local setup, environment variables, how to run migrations,
+how to run the app, and how to run the synthetic data generator and test-mode send.
+Keep it concise and practical.
+Primary persona | Indie SaaS developer / small team shipping a web app
+Pain point | Wants automation and measurable improvement without learning complex marketing tools
+Positioning | Developer-first 'autopilot' for lifecycle + simple broadcasts
+Price target | < $10/month conceptually (class project; billing not required)

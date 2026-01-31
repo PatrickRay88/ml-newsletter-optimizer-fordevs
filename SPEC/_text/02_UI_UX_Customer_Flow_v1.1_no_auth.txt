@@ -1,0 +1,66 @@
+Email Autopilot — UI/UX & Customer Experience Spec
+Version: 1.0 | Date: 2026-01-30 | Project: Email Autopilot (Resend-powered)
+1. Information Architecture
+Primary navigation (left sidebar):
+Home
+Onboarding
+Contacts
+Segments
+Flows
+Broadcasts
+Deliverability
+Events
+Settings
+2. Onboarding Wizard (Core Story)
+The onboarding experience must be a 4-step checklist with clear success states and zero ambiguity.
+Step 1 — Connect Resend
+UI: API key password input + 'Test connection' button + 'Save'
+Success state: shows 'Connected' and displays workspace metadata (e.g., domains count)
+Error states: invalid key, network error, permission insufficient
+Step 2 — Choose Mode
+Test Mode (no sending domain required): send only to resend.dev test inboxes and labeled variants
+Production Mode (domain required): shows domain verification instructions (not required for class demo)
+Step 3 — Webhooks (Optional in MVP)
+Default: Not required. App can poll email status using Resend 'retrieve email' endpoint.
+If enabled: show webhook URL and instructions; show 'last webhook received' heartbeat.
+Advanced: implement signature verification and store webhook secret.
+Step 4 — Send a Test
+UI: 'Create Test List' button (auto-creates a contact list with delivered/bounced/complained/suppressed test inboxes)
+UI: 'Send Test Broadcast' button (sends a simple template)
+UI: Live timeline: queued -> sent -> delivered/bounced/failed
+3. Screens (Detailed)
+3.1 Home Dashboard
+Cards: Sends, Delivered, Bounced, Suppressed, Synthetic Clicks, CTR uplift vs baseline
+Chart: daily sends/clicks (last 7 days)
+Autopilot status: which ML modules are ON
+3.2 Contacts
+Import CSV, add single contact, tag contacts
+Show columns: email, status (active/suppressed), timezone, risk score, last event, segments count
+3.3 Segments
+Rule builder (simple): filters on tags, status, timezone, last_seen, last_click
+Segment detail: size, CTR, best send-window heatmap, recommended next action
+3.4 Flows
+Flow templates: Onboarding (3 steps), Activation nudge, Re-engage 7d, Winback 30d
+Each step: trigger event, delay, segment filter, template, ML toggles (send-time, hygiene, experiment)
+3.5 Broadcasts
+Pick segment, pick template, optional subject variants A/B
+Schedule: send now OR autopilot recommended time
+3.6 Deliverability
+Bounce rate (hard/soft), suppressed count, domain breakdown (optional)
+Action list: 'suppress risky', 'throttle cold segment', 'remove repeated hard bounces'
+4. Template Library
+Ship a minimal template library with variables; avoid WYSIWYG editor in MVP.
+Welcome / Getting started
+Setup reminder
+Feature highlight
+Weekly update
+Winback
+Copilot: Build the onboarding wizard UI
+Copilot Prompt (paste as-is):
+Create a Next.js page '/onboarding' that shows a 4-step checklist:
+1) Connect Resend (API key input + test)
+2) Choose mode (Test Mode vs Production Mode)
+3) Webhooks (optional) with a webhook URL + last event heartbeat
+4) Send a Test (Create Test List, Send Test Broadcast, show timeline).
+Use clean card UI, clear success/error states, and store progress in the database (single demo workspace; no sign-in).
+Assume API routes exist: /api/integrations/resend/test, /api/integrations/resend/save, /api/test/create-list, /api/test/send-broadcast.

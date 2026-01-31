@@ -1,0 +1,100 @@
+Email Autopilot — GitHub Copilot Instructions
+Version 1.0 | Date: 2026-01-30 | Scope: No-auth, synthetic/test-mode
+1. Purpose
+This document is the prompt-and-conventions guide for using GitHub Copilot to build the Email Autopilot MVP. It standardizes architecture choices, file structure, coding conventions, and how to ask Copilot for code in small, verifiable increments.
+2. Hard Constraints (Do not violate)
+No sign-in / accounts / subscriptions (single demo workspace only).
+Must work in Test Mode without a verified sending domain.
+Do not depend on real user behavior; generate synthetic engagement deterministically.
+Prefer simple, reliable implementations over complex abstractions.
+All sensitive keys must never be logged; store in DB Settings (encrypted if possible).
+3. Reference Stack
+Next.js + TypeScript (App Router)
+Postgres + Prisma
+Resend API integration (sending + status polling; webhooks optional)
+Scripts folder for synthetic data generator
+4. Repository Structure (recommended)
+Use this structure:
+app/ (Next.js pages)
+onboarding/ page.tsx
+settings/ page.tsx
+contacts/ page.tsx
+segments/ page.tsx
+broadcasts/ page.tsx
+deliverability/ page.tsx
+dev/ page.tsx
+pages/api/ (or app/api/ if using App Router API routes)
+settings
+integrations/resend/test
+test/create-list
+broadcasts
+jobs/poll-email-status
+jobs/train-models
+prisma/schema.prisma
+scripts/generate_synthetic_data.ts
+lib/ (resend client, db client, utils)
+5. Copilot Prompting Rules (high leverage)
+Ask for ONE ticket at a time (from the backlog) and require Copilot to include acceptance checks.
+Always request unit tests (where practical) and a quick manual test plan.
+Force deterministic behavior: specify fixed seeds for generators and tests.
+Require idempotency: running 'Create Test List' or webhook replay must not duplicate records.
+Use typed interfaces for request/response payloads; avoid 'any'.
+6. Environment Variables (.env)
+Copilot should assume these variables exist (even if Settings also stores the key):
+DATABASE_URL=postgresql://...
+APP_BASE_URL=http://localhost:3000
+APP_ENCRYPTION_KEY=... (optional for encrypting Resend key in DB)
+7. Resend Integration Conventions
+All sending uses the stored Resend API key from Settings.
+Test Mode sends only to resend.dev test inbox addresses with labels (delivered+001@resend.dev, etc.).
+Outcome tracking MVP uses polling of Resend retrieve-email endpoint; store last_event into MessageOutcome.
+Webhooks are optional; if implemented, verify signature and treat events idempotently.
+8. Synthetic Engagement Conventions
+Copilot should implement synthetic clicks as follows:
+Assign each contact a propensity p and a preferred hour-of-week window distribution.
+When a message is sent, compute click probability using: propensity × segment_factor × time_factor × fatigue_factor.
+If clicked, set clicked_at deterministically using seeded RNG.
+Store clicked_at in MessageOutcome.clicked_at (do not rely on real inbox clicks).
+9. ML Modules (what to implement)
+Copilot should prioritize implementing Send-Time Optimization first.
+Send-Time Optimizer v1 (required)
+Build hour-of-week click histograms globally and by segment from clicked_at timestamps.
+Use Bayesian smoothing for cold-start contacts.
+Expose recommendSendTime(contactId, segmentId, now) -> Date.
+Respect throttling constraints (no send if last send < 24h).
+Log explanations (top window, probabilities) for the UI.
+Hygiene Scoring (optional)
+Predict bounce risk from bounce history + engagement recency + domain category.
+Suppress if risk > threshold; record suppression reason.
+10. Code Style Requirements
+TypeScript strict mode on; no implicit any.
+Use small pure functions for model logic (easy to test).
+Use server-side logging sparingly; never log secrets.
+All DB writes must be idempotent where repeated actions are expected.
+Prefer explicit SQL constraints/unique indexes to guarantee idempotency.
+11. Copy/Paste Copilot Prompts
+Prompt: Implement 'Create Test List' endpoint
+Copilot Prompt (paste as-is):
+Implement POST /api/test/create-list in Next.js API routes.
+Behavior: create 200 delivered test contacts, 20 bounced, 5 suppressed, 3 complained (configurable).
+Use email labels like delivered+001@resend.dev and tags like outcome=delivered.
+Must be idempotent: do not create duplicates if endpoint is called again.
+Create unique index on Contact.email; use upsert.
+Return JSON summary counts and elapsed time. Include unit tests.
+Prompt: Implement polling job for outcomes
+Copilot Prompt (paste as-is):
+Implement POST /api/jobs/poll-email-status that:
+1) finds Messages sent in last 10 minutes with no terminal outcome,
+2) calls Resend retrieve-email endpoint for each resend_message_id,
+3) writes terminal outcomes (delivered/bounced/failed) to MessageOutcome idempotently,
+4) returns a summary of updates.
+Include retry/backoff, and ensure no duplicate writes. Include tests with mocked Resend client.
+Prompt: Implement send-time optimizer v1
+Copilot Prompt (paste as-is):
+Implement a module lib/ml/send_time_optimizer.ts with:
+- buildGlobalHistogram(messages)
+- buildSegmentHistogram(messages, segmentId)
+- recommendSendTime(contact, segmentId, now)
+Use hour-of-week bins (0..167) and Bayesian smoothing.
+Write unit tests using deterministic synthetic data.
+Also implement an API route /api/ml/recommend-send-time?contactId=...&segmentId=... returning the recommendation + explanation.

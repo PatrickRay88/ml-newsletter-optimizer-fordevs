@@ -1,0 +1,57 @@
+Email Autopilot — Testing Plan & Synthetic Data Spec
+Version: 1.0 | Date: 2026-01-30 | Project: Email Autopilot (Resend-powered)
+1. Testing Goals
+Validate the onboarding story end-to-end in Test Mode with no sending domain.
+Prove analytics + ML pipeline works using synthetic engagement events.
+Demonstrate resilience: retry logic, idempotency, and safe failure modes.
+2. Test Mode Email Address Strategy
+Use Resend-provided resend.dev test inboxes to simulate delivery outcomes. Use labels to create many unique contacts.
+Base addresses (examples): delivered@resend.dev, bounced@resend.dev, complained@resend.dev, suppressed@resend.dev.
+Labeled examples: delivered+001@resend.dev ... delivered+200@resend.dev; bounced+001@resend.dev ... etc.
+Note: Click events will not be produced by these inboxes; clicks are generated synthetically (Section 4).
+3. Webhooks vs Polling Test Plan
+3.1 MVP (No webhooks)
+After sending email, poll Resend retrieve-email endpoint for last_event until terminal state or timeout.
+Update MessageOutcome with delivered/bounced/failed based on last_event.
+UI shows timeline updates during polling window.
+3.2 With webhooks (Optional)
+Configure Resend webhook to POST events to /webhooks/resend.
+Verify signature (raw body) and update outcomes in real time.
+Use Resend dashboard 'replay' to test idempotency and event handling.
+4. Synthetic Engagement Data (Clicks/Conversions)
+Because the class project cannot rely on real user behavior, simulate engagement deterministically and reproducibly.
+4.1 Synthetic contact generator
+Generate N contacts (e.g., 500) with attributes: timezone (US only), segment label, engagement propensity p in [0,1].
+Assign each contact to a lifecycle state: trial, active, inactive.
+4.2 Synthetic event generator
+Generate product events into /events: signed_up, feature_used, activated, inactive_7d, etc.
+Generate email engagement outcomes: clicked_at based on send time and propensity.
+4.3 Engagement model (simple, explainable)
+Example synthetic click probability model:
+Base click probability = p_contact
+Multiply by segment factor (e.g., trial=1.2, active=1.0, inactive=0.6)
+Multiply by time-of-week factor derived from contact's 'preferred window'
+Apply fatigue: reduce probability if user received emails in last 48 hours
+Sample click outcome (Bernoulli); if clicked, set clicked_at = sent_at + random(5-180 minutes)
+5. Test Cases
+5.1 Onboarding
+Invalid API key -> clear error and no save
+Valid API key -> connected state persists after refresh
+Create Test List -> contacts appear with expected statuses and tags
+Send Test Broadcast -> messages created, sent, and outcomes recorded
+5.2 Deliverability outcomes
+Delivered test inbox -> delivered outcome recorded
+Bounced test inbox -> bounce outcome recorded; suppression applied if rule says so
+Suppressed test inbox -> suppression outcome recorded
+5.3 ML validation
+Send-time optimizer chooses preferred window more often after training
+CTR uplift appears when optimizer is enabled (using synthetic clicks)
+Hygiene model suppresses high-risk contacts and reduces simulated bounces
+Copilot: Implement synthetic data generator
+Copilot Prompt (paste as-is):
+Write a TypeScript script 'scripts/generate_synthetic_data.ts' that:
+1) Creates 500 contacts with US timezones and engagement propensity.
+2) Creates events for each contact over 14 days (signed_up, feature_used, activated, etc.).
+3) Creates a preferred send window per contact (hour-of-week distribution).
+4) After a broadcast is sent, generates synthetic click outcomes into MessageOutcome.clicked_at based on the model described in the spec.
+Make it deterministic with a fixed random seed. Provide CLI args for N and days.

@@ -1,0 +1,9 @@
+.next
+node_modules
+.env
+.env.local
+.env.production
+pnpm-lock.yaml
+yarn.lock
+package-lock.json
+prisma/migrations

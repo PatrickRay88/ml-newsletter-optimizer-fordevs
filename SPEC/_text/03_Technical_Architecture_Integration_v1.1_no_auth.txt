@@ -1,0 +1,47 @@
+Email Autopilot — Technical Architecture & Integration Spec
+Version: 1.0 | Date: 2026-01-30 | Project: Email Autopilot (Resend-powered)
+1. Reference Stack (Recommended)
+2. Core Integrations
+2.1 Resend Sending
+Store one Resend API key encrypted in a single Settings record.
+Sending: call Resend send email endpoint; store returned email id as resend_message_id.
+Status tracking: MVP can poll Resend retrieve-email endpoint to capture last_event (delivered/bounced).
+2.2 Resend Webhooks (Optional)
+Endpoint: POST /webhooks/resend
+Verify webhook requests (signature) when enabled; store webhook secret in Settings.
+On event: update message_outcomes, suppression table, and model training signals.
+3. Database Schema (Minimum)
+Implement these tables first: settings, contacts, segments, segment_memberships, templates, broadcasts, messages, message_outcomes, events, suppression.
+Add models/predictions tables after ML modules are introduced.
+4. API Surface (Minimum)
+POST /api/integrations/resend/test
+POST /api/integrations/resend/save
+POST /api/contacts/import
+POST /api/events
+POST /api/segments (create/update)
+POST /api/segments/recompute
+POST /api/broadcasts
+POST /api/broadcasts/:id/send
+POST /api/jobs/poll-email-status (MVP)
+POST /api/jobs/train-models (nightly)
+5. Job Scheduling
+Every 5 minutes: schedule due messages (flows/broadcasts) and send via Resend.
+Every 2 minutes for the first 5-10 minutes after send: poll Resend retrieve-email for last_event updates (MVP).
+Nightly: recompute segments, refresh ML models, and write model metrics to DB.
+6. Security/Privacy for Class Project
+Encrypt API keys at rest (server-side encryption key).
+Do not store real sensitive data; use resend.dev test inboxes and synthetic event data.
+Provide a 'Delete workspace data' button for demos.
+Copilot: Generate Prisma schema and migrations
+Copilot Prompt (paste as-is):
+Create a Prisma schema for Postgres with models: Settings, Contact, Segment, SegmentMembership,
+Template, Broadcast, BroadcastVariant, Message, MessageOutcome, Event, Suppression, ModelVersion, Prediction.
+Add indexes for: Contact(email), Event(external_user_id, timestamp), Message(resend_message_id), SegmentMembership(segment_id, contact_id).
+Include relations and cascade delete behavior for demo reset.
+Generate initial migration and seed script that creates a default workspace, 5 templates, and a sample onboarding flow.
+Frontend | Next.js (App Router) + TypeScript
+Backend | Next.js API routes (or separate Node service)
+Database | PostgreSQL (local Docker or managed)
+ORM | Prisma
+Jobs/Scheduler | Cron-like scheduler (node-cron) OR hosted cron; optional queue later
+Authentication (not in scope) | None (single demo workspace; no sign-in)

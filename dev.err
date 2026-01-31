@@ -1,0 +1,6 @@
+[Error: EINVAL: invalid argument, readlink 'c:\Users\patri\OneDrive\Documents\Coding\Python Scripts\DM2\.next\app-build-manifest.json'] {
+  errno: -4071,
+  code: 'EINVAL',
+  syscall: 'readlink',
+  path: 'c:\\Users\\patri\\OneDrive\\Documents\\Coding\\Python Scripts\\DM2\\.next\\app-build-manifest.json'
+}
