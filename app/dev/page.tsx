@@ -21,6 +21,19 @@ type Decision = {
   createdAt: string;
 };
 
+type ModelSummary = {
+  id: string;
+  trainedAt: string | null;
+  metrics: unknown;
+  metadata: unknown;
+  predictionCount: number;
+};
+
+type ModelSummaryResponse = {
+  sendTime: ModelSummary | null;
+  hygiene: ModelSummary | null;
+};
+
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function describeHourOfWeek(hour: number): string {
@@ -57,6 +70,8 @@ export default function DevUtilitiesPage() {
   const [status, setStatus] = useState<Record<string, ApiStatus>>({});
   const [decisions, setDecisions] = useState<Decision[]>([]);
   const [decisionsStatus, setDecisionsStatus] = useState<ApiStatus>({ type: "idle" });
+  const [modelSummary, setModelSummary] = useState<ModelSummaryResponse>({ sendTime: null, hygiene: null });
+  const [modelStatus, setModelStatus] = useState<ApiStatus>({ type: "idle" });
   const [flowContact, setFlowContact] = useState("");
   const [flowEvent, setFlowEvent] = useState("user.signup");
 
@@ -82,9 +97,28 @@ export default function DevUtilitiesPage() {
     }
   }, []);
 
+  const fetchModelSummary = useCallback(async () => {
+    setModelStatus({ type: "loading" });
+    try {
+      const response = await fetch("/api/models/summary");
+      const body = await response.json();
+      if (!response.ok || !body.success) {
+        throw new Error(typeof body.message === "string" ? body.message : "Failed to load model summary");
+      }
+      setModelSummary(body.models as ModelSummaryResponse);
+      setModelStatus({ type: "success", message: "Model summary updated" });
+    } catch (error) {
+      setModelStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load model summary"
+      });
+    }
+  }, []);
+
   useEffect(() => {
     void fetchDecisions();
-  }, [fetchDecisions]);
+    void fetchModelSummary();
+  }, [fetchDecisions, fetchModelSummary]);
 
   const runPost = useCallback(
     async (key: string, endpoint: string, payload?: unknown) => {
@@ -107,6 +141,9 @@ export default function DevUtilitiesPage() {
         if (key.includes("broadcast")) {
           void fetchDecisions();
         }
+        if (key.includes("train-models")) {
+          void fetchModelSummary();
+        }
       } catch (error) {
         updateStatus(key, {
           type: "error",
@@ -114,7 +151,7 @@ export default function DevUtilitiesPage() {
         });
       }
     },
-    [fetchDecisions, updateStatus]
+    [fetchDecisions, fetchModelSummary, updateStatus]
   );
 
   const actionButtons = useMemo(
@@ -123,14 +160,16 @@ export default function DevUtilitiesPage() {
         key: "create-list",
         label: "Create Test List",
         description: "Seed deterministic resend.dev contacts for the demo inbox.",
-        onClick: () => runPost("create-list", "/api/test/create-list")
+        onClick: () => runPost("create-list", "/api/test/create-list"),
+        walkthroughKey: "dev-create-list"
       },
       {
         key: "send-broadcast-optimized",
         label: "Send Broadcast (Optimizer)",
         description: "Queue the onboarding broadcast using optimizer recommendations.",
         onClick: () =>
-          runPost("send-broadcast-optimized", "/api/test/send-broadcast", { useOptimizer: true })
+          runPost("send-broadcast-optimized", "/api/test/send-broadcast", { useOptimizer: true }),
+        walkthroughKey: "dev-send-broadcast"
       },
       {
         key: "send-broadcast-manual",
@@ -143,13 +182,22 @@ export default function DevUtilitiesPage() {
         key: "poll-outcomes",
         label: "Poll Email Status",
         description: "Invoke the status poller to reconcile delivery outcomes.",
-        onClick: () => runPost("poll-outcomes", "/api/jobs/poll-email-status")
+        onClick: () => runPost("poll-outcomes", "/api/jobs/poll-email-status"),
+        walkthroughKey: "dev-poll-outcomes"
       },
       {
         key: "hygiene-sweep",
         label: "Run Hygiene Sweep",
         description: "Score contacts for risk and auto-suppress high-risk records.",
-        onClick: () => runPost("hygiene-sweep", "/api/jobs/hygiene-scan")
+        onClick: () => runPost("hygiene-sweep", "/api/jobs/hygiene-scan"),
+        walkthroughKey: "dev-hygiene-sweep"
+      },
+      {
+        key: "train-models",
+        label: "Train ML Models",
+        description: "Recompute send-time histograms and hygiene risk model.",
+        onClick: () => runPost("train-models", "/api/jobs/train-models"),
+        walkthroughKey: "dev-train-models"
       },
       {
         key: "process-flows",
@@ -206,6 +254,7 @@ export default function DevUtilitiesPage() {
                   type="button"
                   onClick={action.onClick}
                   disabled={disabled}
+                  data-walkthrough={action.walkthroughKey}
                   style={{
                     padding: "0.75rem 1.5rem",
                     borderRadius: "999px",
@@ -222,6 +271,78 @@ export default function DevUtilitiesPage() {
             );
           })}
         </div>
+
+        <section
+          style={{
+            marginTop: "1.5rem",
+            border: "1px solid #1f2937",
+            borderRadius: "0.75rem",
+            padding: "1rem 1.25rem",
+            background: "#0f172a",
+            display: "grid",
+            gap: "0.75rem"
+          }}
+        >
+          <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Model Training Summary</h2>
+              <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
+                Latest trained models and prediction counts.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={fetchModelSummary}
+              disabled={modelStatus.type === "loading"}
+              style={{
+                padding: "0.6rem 1.2rem",
+                borderRadius: "999px",
+                border: "none",
+                background: modelStatus.type === "loading" ? "#1f2937" : "#38bdf8",
+                color: modelStatus.type === "loading" ? "#475569" : "#0f172a",
+                fontWeight: 600,
+                cursor: modelStatus.type === "loading" ? "default" : "pointer"
+              }}
+            >
+              {modelStatus.type === "loading" ? "Refreshing..." : "Refresh"}
+            </button>
+          </header>
+          {modelStatus.type !== "idle" && modelStatus.message && (
+            <p style={{ margin: 0, color: modelStatus.type === "error" ? "#f87171" : "#10b981" }}>
+              {modelStatus.message}
+            </p>
+          )}
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {([
+              { key: "sendTime", label: "Send-Time Optimizer" },
+              { key: "hygiene", label: "Hygiene Risk Model" }
+            ] as const).map((entry) => {
+              const model = modelSummary[entry.key];
+              return (
+                <div
+                  key={entry.key}
+                  style={{
+                    border: "1px solid #1f2937",
+                    borderRadius: "0.6rem",
+                    padding: "0.85rem",
+                    background: "#0b1220"
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <strong>{entry.label}</strong>
+                    <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
+                      {model?.trainedAt ? `Trained ${formatTimestamp(model.trainedAt)}` : "Not trained"}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: "0.4rem", color: "#cbd5f5", fontSize: "0.9rem" }}>
+                    <div>Predictions: {model?.predictionCount ?? 0}</div>
+                    <div>Model ID: {model?.id ?? "—"}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
 
         <div
           style={{

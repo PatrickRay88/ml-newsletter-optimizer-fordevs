@@ -25,3 +25,6 @@ Resend-powered email autopilot demo for developers/data scientists. Includes seg
 
 ## Demo flow
 Onboarding → create test list → send test broadcast → poll outcomes → review dashboard and deliverability.
+
+## Future features
+- One-click "Run Full Simulation" action (generate data → train models → send broadcast → poll outcomes → hygiene sweep).

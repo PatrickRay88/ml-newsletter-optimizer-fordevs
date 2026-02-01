@@ -1,5 +1,6 @@
 import { ContactStatus, HygieneRiskLevel, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { buildHygieneFeatures, predictHygieneRisk } from "./hygiene_model";
 
 export type HygieneComputationInput = {
   id: string;
@@ -9,6 +10,8 @@ export type HygieneComputationInput = {
   lastMessageSentAt: Date | null;
   propensity: Prisma.Decimal | number | null;
   suppressions: Array<{ id: string; reason: string }>;
+  deliveredNotClickedRatio?: number;
+  modelScore?: number | null;
 };
 
 export type HygieneComputationResult = {
@@ -74,6 +77,19 @@ export function computeHygieneScore(
   const daysSinceSend = input.lastMessageSentAt ? (now.getTime() - input.lastMessageSentAt.getTime()) / msPerDay : Infinity;
 
   if (riskLevel !== HygieneRiskLevel.HIGH) {
+    if (typeof input.modelScore === "number" && Number.isFinite(input.modelScore)) {
+      if (input.modelScore >= 0.7) {
+        riskLevel = HygieneRiskLevel.HIGH;
+        score = Math.max(score, input.modelScore * 100);
+        reasons.push(`ML risk score ${input.modelScore.toFixed(2)}`);
+        shouldSuppress = true;
+      } else if (input.modelScore >= 0.4) {
+        riskLevel = HygieneRiskLevel.MEDIUM;
+        score = Math.max(score, input.modelScore * 100);
+        reasons.push(`ML risk score ${input.modelScore.toFixed(2)}`);
+      }
+    }
+
     if (daysSinceSend > STALE_SEND_THRESHOLD_DAYS) {
       riskLevel = HygieneRiskLevel.MEDIUM;
       score = Math.max(score, 65);
@@ -115,6 +131,15 @@ export function computeHygieneScore(
 
 export async function runHygieneSweep(options: HygieneSweepOptions = {}): Promise<HygieneSweepSummary> {
   const now = options.now ?? new Date();
+  const hygieneModel = await prisma.modelVersion.findFirst({
+    where: { modelName: "hygiene_v1" },
+    orderBy: { trainedAt: "desc" }
+  });
+
+  const modelMetadata = (hygieneModel?.metadata ?? {}) as { weights?: number[]; baseRate?: number };
+  const modelWeights = Array.isArray(modelMetadata.weights) ? modelMetadata.weights : null;
+  const baseRate = typeof modelMetadata.baseRate === "number" ? modelMetadata.baseRate : 0.05;
+
   const contacts = await prisma.contact.findMany({
     take: options.limit,
     select: {
@@ -130,6 +155,16 @@ export async function runHygieneSweep(options: HygieneSweepOptions = {}): Promis
         select: {
           id: true,
           reason: true
+        }
+      },
+      messages: {
+        select: {
+          sentAt: true,
+          outcome: {
+            select: {
+              clickedAt: true
+            }
+          }
         }
       }
     }
@@ -157,6 +192,20 @@ export async function runHygieneSweep(options: HygieneSweepOptions = {}): Promis
   let contactsSuppressed = 0;
 
   for (const contact of contacts) {
+    const totalSends = contact.messages.filter((message) => message.sentAt).length;
+    const deliveredNotClicked = contact.messages.filter((message) => message.sentAt && !message.outcome?.clickedAt).length;
+    const deliveredNotClickedRatio = totalSends > 0 ? deliveredNotClicked / totalSends : 0;
+    const featureVector = buildHygieneFeatures({
+      lastEventAt: contact.lastEventAt,
+      lastMessageSentAt: contact.lastMessageSentAt,
+      propensity: typeof contact.propensity === "object" && contact.propensity !== null
+        ? Number(contact.propensity)
+        : contact.propensity ?? 0,
+      deliveredNotClickedRatio,
+      now
+    }).features;
+    const modelScore = predictHygieneRisk(modelWeights, featureVector, baseRate);
+
     const result = computeHygieneScore({
       id: contact.id,
       status: contact.status,
@@ -164,7 +213,9 @@ export async function runHygieneSweep(options: HygieneSweepOptions = {}): Promis
       lastEventAt: contact.lastEventAt,
       lastMessageSentAt: contact.lastMessageSentAt,
       propensity: contact.propensity,
-      suppressions: contact.suppressions
+      suppressions: contact.suppressions,
+      deliveredNotClickedRatio,
+      modelScore
     }, now);
 
     if (result.riskLevel === HygieneRiskLevel.HIGH) {

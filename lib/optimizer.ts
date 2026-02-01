@@ -16,6 +16,11 @@ type Histograms = {
   segments: Map<string, Histogram>;
 };
 
+type StoredHistogram = {
+  sends: number[];
+  clicks: number[];
+};
+
 const HISTOGRAM_CACHE_TTL_MS = 60 * 1000;
 
 let histogramCache: {
@@ -37,6 +42,50 @@ function hourOfWeek(date: Date): number {
 function getSegmentTag(tags: string[]): string | null {
   const tag = tags.find((value) => value.startsWith(SEGMENT_TAG_PREFIX));
   return tag ? tag.split("=")[1] ?? null : null;
+}
+
+function histogramHasData(histogram: Histogram | null | undefined): boolean {
+  return Boolean(histogram && histogram.sends.some((value) => value > 0));
+}
+
+function isStoredHistogram(value: unknown): value is StoredHistogram {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const candidate = value as StoredHistogram;
+  return Array.isArray(candidate.sends) && Array.isArray(candidate.clicks);
+}
+
+function loadHistogramsFromModel(metrics: unknown): Histograms | null {
+  if (!metrics || typeof metrics !== "object") {
+    return null;
+  }
+  const payload = metrics as {
+    global?: StoredHistogram;
+    segments?: Record<string, StoredHistogram>;
+  };
+  if (!payload.global || !isStoredHistogram(payload.global)) {
+    return null;
+  }
+
+  const global = {
+    sends: payload.global.sends.slice(0, HOURS_PER_WEEK),
+    clicks: payload.global.clicks.slice(0, HOURS_PER_WEEK)
+  };
+
+  const segments = new Map<string, Histogram>();
+  if (payload.segments && typeof payload.segments === "object") {
+    Object.entries(payload.segments).forEach(([segment, histogram]) => {
+      if (isStoredHistogram(histogram)) {
+        segments.set(segment, {
+          sends: histogram.sends.slice(0, HOURS_PER_WEEK),
+          clicks: histogram.clicks.slice(0, HOURS_PER_WEEK)
+        });
+      }
+    });
+  }
+
+  return { global, segments };
 }
 
 async function buildHistograms(): Promise<Histograms> {
@@ -91,10 +140,63 @@ async function buildHistograms(): Promise<Histograms> {
   return { global, segments };
 }
 
+async function buildContactHistogram(contactId: string): Promise<Histogram | null> {
+  const messages = await prisma.message.findMany({
+    where: {
+      contactId,
+      sentAt: {
+        not: null
+      }
+    },
+    select: {
+      sentAt: true,
+      outcome: {
+        select: {
+          clickedAt: true
+        }
+      }
+    }
+  });
+
+  if (messages.length === 0) {
+    return null;
+  }
+
+  const histogram = createHistogram();
+  messages.forEach((message) => {
+    if (!message.sentAt) {
+      return;
+    }
+    const hour = hourOfWeek(message.sentAt);
+    histogram.sends[hour] += 1;
+    if (message.outcome?.clickedAt) {
+      histogram.clicks[hour] += 1;
+    }
+  });
+
+  return histogramHasData(histogram) ? histogram : null;
+}
+
 async function getHistograms(): Promise<Histograms> {
   const now = Date.now();
   if (histogramCache && now - histogramCache.fetchedAt < HISTOGRAM_CACHE_TTL_MS) {
     return histogramCache.data;
+  }
+
+  const latestModel = await prisma.modelVersion.findFirst({
+    where: { modelName: "send_time_v1" },
+    orderBy: { trainedAt: "desc" }
+  });
+
+  if (latestModel?.metrics) {
+    const stored = loadHistogramsFromModel(latestModel.metrics);
+    if (stored) {
+      histogramCache = {
+        data: stored,
+        fetchedAt: now
+      };
+      return stored;
+    }
   }
 
   const data = await buildHistograms();
@@ -121,9 +223,13 @@ function scoreHistogram(hour: number, histogram: Histogram, prior: number): numb
   return (clicks + SMOOTHING_ALPHA * prior) / (sends + SMOOTHING_ALPHA);
 }
 
-function pickBestHour(histogram: Histogram, fallback: Histogram): { hour: number; score: number; baseline: number } {
-  const prior = computePrior(histogram);
+function pickBestHour(
+  histogram: Histogram,
+  fallback: Histogram,
+  useFallbackPrior = false
+): { hour: number; score: number; baseline: number } {
   const fallbackPrior = computePrior(fallback);
+  const prior = useFallbackPrior ? fallbackPrior : computePrior(histogram);
   let bestHour = 0;
   let bestScore = -Infinity;
 
@@ -214,16 +320,28 @@ export async function recommendSendTime(contactId: string, referenceDate = new D
   }
 
   const histograms = await getHistograms();
+  const contactHistogram = await buildContactHistogram(contact.id);
   const segment = getSegmentTag(contact.tags ?? []);
   const segmentHistogram = segment ? histograms.segments.get(segment) : null;
-  const histogramToUse = segmentHistogram && segmentHistogram.sends.some((value) => value > 0)
-    ? segmentHistogram
-    : histograms.global;
+  const segmentHasData = histogramHasData(segmentHistogram ?? null);
+  const fallbackHistogram = segmentHasData ? (segmentHistogram as Histogram) : histograms.global;
 
-  const { hour, score, baseline } = pickBestHour(histogramToUse, histograms.global);
+  const { hour, score, baseline } = contactHistogram
+    ? pickBestHour(contactHistogram, fallbackHistogram, true)
+    : segmentHasData
+      ? pickBestHour(fallbackHistogram, histograms.global)
+      : pickBestHour(histograms.global, histograms.global);
   let recommendedAt = getNextDateForHour(referenceDate, hour, contact.timezone ?? undefined);
   let throttled = false;
-  let rationale = segment ? `Segment-based recommendation (${segment})` : "Global recommendation";
+  let rationale = "Global recommendation";
+
+  if (contactHistogram) {
+    rationale = segment
+      ? `Contact + segment recommendation (${segment})`
+      : "Contact-based recommendation";
+  } else if (segment) {
+    rationale = `Segment-based recommendation (${segment})`;
+  }
 
   if (contact.lastMessageSentAt) {
     const earliest = new Date(contact.lastMessageSentAt.getTime() + ONE_DAY_MS);
@@ -248,6 +366,7 @@ export async function recommendSendTime(contactId: string, referenceDate = new D
       baselineScore: baseline,
       rationale: {
         segment: segment ?? "global",
+        usedContactHistogram: Boolean(contactHistogram),
         usedSegmentHistogram: Boolean(segmentHistogram && segmentHistogram.sends.some((value) => value > 0)),
         generatedAt: referenceDate.toISOString(),
         throttled,

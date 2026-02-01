@@ -192,6 +192,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Ini
             onChange={(event) => setApiKey(event.target.value)}
             autoComplete="off"
             spellCheck={false}
+            data-walkthrough="settings-api-key"
             style={{
               padding: "0.75rem 1rem",
               borderRadius: "0.75rem",
@@ -223,6 +224,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Ini
             onChange={(event) => setWebhookSecret(event.target.value)}
             autoComplete="off"
             spellCheck={false}
+            data-walkthrough="settings-webhook-secret"
             style={{
               padding: "0.75rem 1rem",
               borderRadius: "0.75rem",
@@ -248,6 +250,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Ini
             type="checkbox"
             checked={webhookEnabled}
             onChange={(event) => setWebhookEnabled(event.target.checked)}
+            data-walkthrough="settings-webhook-toggle"
           />
           <label htmlFor="webhookEnabled" style={{ fontWeight: 600 }}>
             Enable webhooks (optional)
@@ -278,6 +281,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Ini
           <button
             type="submit"
             disabled={!canSubmit}
+            data-walkthrough="settings-save"
             style={{
               padding: "0.75rem 1.5rem",
               borderRadius: "9999px",

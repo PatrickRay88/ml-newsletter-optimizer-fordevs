@@ -201,6 +201,7 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="January onboarding update"
+              data-walkthrough="broadcast-name"
               style={{
                 padding: "0.65rem 0.75rem",
                 borderRadius: "0.6rem",
@@ -273,6 +274,7 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
             type="button"
             onClick={handleCreate}
             disabled={!canCreate || pending}
+            data-walkthrough="broadcast-create"
             style={{
               padding: "0.75rem 1.5rem",
               borderRadius: "0.75rem",
@@ -359,6 +361,7 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
                   type="button"
                   onClick={() => handleSend(broadcast.id, true)}
                   disabled={isFinal || pending}
+                  data-walkthrough="broadcast-send-optimizer"
                   style={{
                     padding: "0.65rem 1.25rem",
                     borderRadius: "0.6rem",
