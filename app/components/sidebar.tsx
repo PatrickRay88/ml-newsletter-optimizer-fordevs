@@ -30,11 +30,11 @@ export default function Sidebar() {
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
-        <div className="brand-badge">EA</div>
-        <div>
-          <strong>Email Autopilot</strong>
-          <span>Demo workspace</span>
-        </div>
+        <img
+          src="/dispatchiq-logo.png"
+          alt="DispatchIQ logo"
+          className="sidebar-logo"
+        />
       </div>
 
       <nav className="sidebar-nav">
