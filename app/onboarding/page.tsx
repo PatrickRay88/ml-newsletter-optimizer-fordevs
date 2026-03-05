@@ -13,7 +13,7 @@ export default async function OnboardingPage() {
     <main style={{ padding: "3rem", maxWidth: "64rem", margin: "0 auto" }}>
       <h1 style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>Onboarding</h1>
       <p style={{ color: "#94a3b8", marginBottom: "2rem", lineHeight: 1.5 }}>
-        Complete these steps to prepare the Email Autopilot demo workspace. All data stays within Test Mode
+        Complete these steps to prepare the Email Autopilot demo workspace. All data stays within Sandbox
         using deterministic synthetic contacts and resend.dev inboxes.
       </p>
       <OnboardingChecklist

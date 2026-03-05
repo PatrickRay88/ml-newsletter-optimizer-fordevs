@@ -31,17 +31,17 @@ export default function Walkthrough() {
       {
         id: "resend-key",
         title: "Connect Resend",
-        description: "Add your Resend API key to enable test sends.",
-        href: "/settings",
+        description: "Add your Resend API key to enable sandbox sends.",
+        href: "/app/settings",
         cta: "Go to Settings",
         target: "[data-walkthrough='settings-api-key']",
         advanceOn: "change"
       },
       {
         id: "save-settings",
-        title: "Create test contacts",
+        title: "Save settings",
         description: "Save settings to lock in your API key.",
-        href: "/settings",
+        href: "/app/settings",
         cta: "Save settings",
         target: "[data-walkthrough='settings-save']",
         advanceOn: "click"
@@ -50,7 +50,7 @@ export default function Walkthrough() {
         id: "webhooks-optional",
         title: "Optional: Webhooks",
         description: "Webhooks stream delivery events in real time. This is optional for the demo.",
-        href: "/settings",
+        href: "/app/settings",
         cta: "Configure webhooks",
         target: "[data-walkthrough='settings-webhook-toggle']",
         advanceOn: "click",
@@ -61,7 +61,7 @@ export default function Walkthrough() {
         id: "webhook-secret",
         title: "Add webhook secret",
         description: "Paste the webhook secret from Resend to verify signatures.",
-        href: "/settings",
+        href: "/app/settings",
         cta: "Enter webhook secret",
         target: "[data-walkthrough='settings-webhook-secret']",
         advanceOn: "change",
@@ -69,9 +69,9 @@ export default function Walkthrough() {
       },
       {
         id: "create-list",
-        title: "Create test contacts",
+        title: "Create sandbox contacts",
         description: "Use Dev utilities to generate resend.dev contacts for your demo list.",
-        href: "/dev",
+        href: "/app/dev",
         cta: "Open Dev utilities",
         target: "[data-walkthrough='dev-create-list']",
         advanceOn: "click"
@@ -80,7 +80,7 @@ export default function Walkthrough() {
         id: "broadcast-name",
         title: "Name a broadcast",
         description: "Create a broadcast draft for your demo campaign.",
-        href: "/broadcasts",
+        href: "/app/broadcasts",
         cta: "Open Broadcasts",
         target: "[data-walkthrough='broadcast-name']",
         advanceOn: "change"
@@ -89,7 +89,7 @@ export default function Walkthrough() {
         id: "broadcast-create",
         title: "Create the draft",
         description: "Save the broadcast draft so it can be sent.",
-        href: "/broadcasts",
+        href: "/app/broadcasts",
         cta: "Create draft",
         target: "[data-walkthrough='broadcast-create']",
         advanceOn: "click"
@@ -98,7 +98,7 @@ export default function Walkthrough() {
         id: "broadcast-send",
         title: "Send with optimizer",
         description: "Schedule the broadcast using the optimizer recommendation.",
-        href: "/broadcasts",
+        href: "/app/broadcasts",
         cta: "Send with optimizer",
         target: "[data-walkthrough='broadcast-send-optimizer']",
         advanceOn: "click"
@@ -107,7 +107,7 @@ export default function Walkthrough() {
         id: "train-models",
         title: "Train ML models",
         description: "Trigger model training for send-time optimization and hygiene risk.",
-        href: "/dev",
+        href: "/app/dev",
         cta: "Train models",
         target: "[data-walkthrough='dev-train-models']",
         advanceOn: "click"
@@ -116,7 +116,7 @@ export default function Walkthrough() {
         id: "poll-outcomes",
         title: "Poll delivery outcomes",
         description: "Sync delivery results back into the workspace.",
-        href: "/dev",
+        href: "/app/dev",
         cta: "Poll outcomes",
         target: "[data-walkthrough='dev-poll-outcomes']",
         advanceOn: "click"
@@ -125,7 +125,7 @@ export default function Walkthrough() {
         id: "hygiene-sweep",
         title: "Run hygiene sweep",
         description: "Score deliverability risk and apply suppressions.",
-        href: "/dev",
+        href: "/app/dev",
         cta: "Run hygiene sweep",
         target: "[data-walkthrough='dev-hygiene-sweep']",
         advanceOn: "click"
@@ -134,7 +134,7 @@ export default function Walkthrough() {
         id: "dashboard",
         title: "Review deliverability",
         description: "Check delivery, clicks, and CTR uplift on the dashboard.",
-        href: "/",
+        href: "/app",
         cta: "View Dashboard"
       }
     ],

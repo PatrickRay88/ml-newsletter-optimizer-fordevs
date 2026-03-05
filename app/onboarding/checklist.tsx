@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import type { WorkspaceModeValue } from "@/lib/workspace";
+import { isWorkspaceMode, workspaceModeDisplayLabel, type WorkspaceModeValue } from "@/lib/workspace";
 
 export type OnboardingStepClient = {
   key: "connect-resend" | "choose-mode" | "webhooks" | "send-test";
@@ -15,7 +15,6 @@ export type OnboardingStepClient = {
 
 export type OnboardingSettingsClient = {
   mode: WorkspaceModeValue;
-  testModeEnabled: boolean;
   hasResendApiKey: boolean;
   resendLastValidatedAt: string | null;
   webhookEnabled: boolean;
@@ -67,7 +66,7 @@ function deriveSteps(settings: OnboardingSettingsClient): OnboardingStepClient[]
     {
       key: "choose-mode",
       title: "Choose Mode",
-      description: "Test Mode keeps sends in resend.dev inboxes; Production Mode requires a verified domain.",
+      description: "Sandbox keeps sends in resend.dev inboxes; Live requires a verified domain.",
       completed: true,
       optional: false,
       lastCompletedAt: null
@@ -174,12 +173,12 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
       setSettings((prev) => ({
         ...prev,
         mode: data.mode ?? prev.mode,
-        testModeEnabled: data.testModeEnabled ?? prev.testModeEnabled,
         hasResendApiKey: data.hasResendApiKey ?? prev.hasResendApiKey
       }));
+      const updatedMode = isWorkspaceMode(data.mode) ? data.mode : modeChoice;
       updateActionStatus("update-mode", {
         type: "success",
-        message: data.testModeEnabled ? "Test Mode enabled" : "Production Mode enabled"
+        message: `${workspaceModeDisplayLabel(updatedMode)} enabled`
       });
       refreshFromServer();
     } catch (error) {
@@ -331,7 +330,7 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
                     {pendingAction ? "Testing..." : "Test connection"}
                   </button>
                   <a
-                    href="/settings"
+                    href="/app/settings"
                     style={{
                       padding: "0.75rem 1.5rem",
                       borderRadius: "0.75rem",
@@ -356,7 +355,7 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
                         checked={modeChoice === "TEST"}
                         onChange={() => setModeChoice("TEST")}
                       />
-                      <span>Test Mode (resend.dev inboxes only)</span>
+                      <span>Sandbox (resend.dev inboxes only)</span>
                     </label>
                     <label style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
                       <input
@@ -366,7 +365,7 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
                         checked={modeChoice === "PRODUCTION"}
                         onChange={() => setModeChoice("PRODUCTION")}
                       />
-                      <span>Production Mode (requires verified domain)</span>
+                      <span>Live (requires verified domain)</span>
                     </label>
                   </div>
                   <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
@@ -386,7 +385,7 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
                       Save mode
                     </button>
                     <span style={{ color: "#94a3b8" }}>
-                      Current: {settings.mode} ({settings.testModeEnabled ? "Test Mode" : "Production Mode"})
+                      Current: {settings.mode} ({workspaceModeDisplayLabel(settings.mode)})
                     </span>
                   </div>
                   <StatusBanner status={actionStatus["update-mode"]} />
@@ -408,7 +407,7 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
                   </div>
                   <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
                     <a
-                      href="/settings"
+                      href="/app/settings"
                       style={{
                         padding: "0.65rem 1.25rem",
                         borderRadius: "0.75rem",
@@ -472,7 +471,7 @@ export default function OnboardingChecklist({ initialState, baseUrl }: Props) {
                       Poll email status
                     </button>
                     <a
-                      href="/dev"
+                      href="/app/dev"
                       style={{
                         padding: "0.75rem 1.5rem",
                         borderRadius: "0.75rem",

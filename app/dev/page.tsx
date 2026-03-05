@@ -215,7 +215,7 @@ export default function DevUtilitiesPage() {
         <header>
           <h1 style={{ marginBottom: "0.5rem" }}>Developer Utilities</h1>
           <p style={{ margin: 0, color: "#94a3b8" }}>
-            Run deterministic demo workflows and inspect optimizer activity. All actions operate in Test Mode.
+            Run deterministic demo workflows and inspect optimizer activity. All actions operate in Sandbox.
           </p>
         </header>
         <div style={{ display: "grid", gap: "1rem" }}>

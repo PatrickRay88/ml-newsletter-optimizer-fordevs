@@ -13,7 +13,7 @@ export type OnboardingStep = {
 
 function mapSteps(summary: SettingsSummary): OnboardingStep[] {
   const connectComplete = summary.hasResendApiKey && Boolean(summary.resendLastValidatedAt);
-  const modeComplete = summary.mode === "PRODUCTION" ? true : summary.mode === "TEST";
+  const modeComplete = true;
   const webhookComplete = summary.webhookEnabled && Boolean(summary.webhookLastReceivedAt);
   const sendTestComplete = Boolean(
     summary.onboardingTestListCreatedAt && summary.onboardingTestBroadcastSentAt
@@ -30,7 +30,7 @@ function mapSteps(summary: SettingsSummary): OnboardingStep[] {
     {
       key: "choose-mode",
       title: "Choose Mode",
-      description: "Test Mode keeps sends in resend.dev inboxes; Production Mode requires a verified domain.",
+      description: "Sandbox keeps sends in resend.dev inboxes; Live requires a verified domain.",
       completed: Boolean(modeComplete),
       lastCompletedAt: null
     },

@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 const NAV_ITEMS = [
@@ -13,7 +14,14 @@ export default function MarketingShell({ children }: { children: React.ReactNode
     <div className="marketing-shell">
       <header className="marketing-header">
         <Link href="/" className="marketing-brand">
-          <img src="/dispatchiq-logo.png" alt="DispatchIQ" />
+          <Image
+            src="/dispatchiq-logo.svg"
+            alt="DispatchIQ"
+            width={180}
+            height={56}
+            className="marketing-logo"
+            priority
+          />
         </Link>
         <nav className="marketing-nav">
           {NAV_ITEMS.map((item) => (

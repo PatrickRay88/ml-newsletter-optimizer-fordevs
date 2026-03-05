@@ -1,11 +1,14 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { WORKSPACE_MODES, type WorkspaceModeValue } from "@/lib/workspace";
+import {
+  WORKSPACE_MODES,
+  type WorkspaceModeValue,
+  workspaceModeDisplayLabel
+} from "@/lib/workspace";
 
 type InitialSettings = {
   mode: WorkspaceModeValue;
-  testModeEnabled: boolean;
   hasResendApiKey: boolean;
   resendLastValidatedAt: string | null;
   webhookEnabled: boolean;
@@ -28,8 +31,8 @@ type StatusState =
   | { type: "error"; message: string };
 
 const MODE_LABELS: Record<WorkspaceModeValue, string> = {
-  TEST: "Test Mode (resend.dev inboxes only)",
-  PRODUCTION: "Production Mode (requires verified domain)"
+  TEST: "Sandbox (resend.dev inboxes only)",
+  PRODUCTION: "Live (requires verified domain)"
 };
 
 function formatIsoTimestamp(value: string | null): string {
@@ -176,7 +179,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Ini
             ))}
           </select>
           <p style={{ marginTop: "0.5rem", color: "#94a3b8" }}>
-            Test Mode keeps all sends within resend.dev inboxes. Production Mode requires a verified sending domain.
+            Sandbox keeps all sends within resend.dev inboxes. Live requires a verified sending domain.
           </p>
         </div>
 
@@ -258,7 +261,7 @@ export default function SettingsForm({ initialSettings }: { initialSettings: Ini
         </div>
 
         <div style={{ color: "#94a3b8" }}>
-          <p>Test Mode Enabled: {mode === "TEST" ? "Yes" : "No"}</p>
+          <p>Environment: {workspaceModeDisplayLabel(mode)}</p>
           <p>Last Connection Test: {formatIsoTimestamp(resendLastValidatedAt)}</p>
           <p>Last Webhook Received: {formatIsoTimestamp(webhookLastReceivedAt)}</p>
         </div>

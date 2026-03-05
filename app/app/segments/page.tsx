@@ -1,1 +1,1 @@
-export { default } from "../../../segments/page";
+export { default } from "../../segments/page";

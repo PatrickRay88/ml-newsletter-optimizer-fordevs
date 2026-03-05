@@ -1,25 +1,24 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV_ITEMS = [
-  { label: "Home", href: "/" },
-  { label: "Onboarding", href: "/onboarding" },
-  { label: "Contacts", href: "/contacts" },
-  { label: "Segments", href: "/segments" },
-  { label: "Flows", href: "/flows" },
-  { label: "Broadcasts", href: "/broadcasts" },
-  { label: "Deliverability", href: "/deliverability" },
-  { label: "Events", href: "/events" },
-  { label: "Templates", href: "/templates" },
-  { label: "Settings", href: "/settings" },
-  { label: "Dev utilities", href: "/dev" }
+  { label: "Home", href: "/app" },
+  { label: "Onboarding", href: "/app/onboarding" },
+  { label: "Contacts", href: "/app/contacts" },
+  { label: "Segments", href: "/app/segments" },
+  { label: "Flows", href: "/app/flows" },
+  { label: "Broadcasts", href: "/app/broadcasts" },
+  { label: "Deliverability", href: "/app/deliverability" },
+  { label: "Templates", href: "/app/templates" },
+  { label: "Dev utilities", href: "/app/dev" }
 ];
 
 function isActive(pathname: string, href: string): boolean {
-  if (href === "/") {
-    return pathname === "/";
+  if (href === "/app") {
+    return pathname === "/app";
   }
   return pathname.startsWith(href);
 }
@@ -30,9 +29,11 @@ export default function Sidebar() {
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
-        <img
-          src="/dispatchiq-logo.png"
+        <Image
+          src="/dispatchiq-logo.svg"
           alt="DispatchIQ logo"
+          width={260}
+          height={120}
           className="sidebar-logo"
         />
       </div>
@@ -49,7 +50,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <p>Test Mode ready. Use resend.dev inboxes for demo sends.</p>
+        <p>Sandbox ready. Use resend.dev inboxes for rehearsals.</p>
       </div>
     </aside>
   );

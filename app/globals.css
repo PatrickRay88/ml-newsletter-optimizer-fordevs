@@ -38,25 +38,25 @@ a {
 }
 
 .sidebar-brand {
-  display: flex;
-  gap: 0;
-  align-items: center;
-  justify-content: center;
+  display: block;
   background: transparent;
   padding: 0;
   overflow: hidden;
-  border-radius: 16px;
-  max-width: 260px;
-  margin: 0 auto;
+  border-radius: 0;
+  width: 100%;
+  height: 192px;
+  max-width: none;
+  margin: 0;
+  line-height: 0;
 }
 
 .sidebar-logo {
   width: 100%;
-  height: 120px;
+  height: 100%;
   object-fit: contain;
   object-position: center;
-  transform: scale(2.5);
-  transform-origin: center;
+  transform: none;
+  display: block;
 }
 
 .brand-badge {
@@ -110,9 +110,98 @@ a {
   border-top: 1px solid #1f2937;
 }
 
+.sidebar-footer p {
+  margin: 0;
+}
+
+.sidebar-account-menu {
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-account-menu .app-user-trigger {
+  width: 100%;
+  justify-content: space-between;
+}
+
+.sidebar-account-menu .app-user-email {
+  max-width: 165px;
+}
+
+.sidebar-account-menu .app-user-dropdown {
+  left: 0;
+  right: 0;
+}
+
 .app-content {
   min-height: 100vh;
   background: radial-gradient(circle at top, rgba(56, 189, 248, 0.08), transparent 45%), #0f172a;
+}
+
+.app-user-menu {
+  position: relative;
+}
+
+.app-user-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  background: rgba(15, 23, 42, 0.92);
+  color: #dbeafe;
+  padding: 0.5rem 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.app-user-email {
+  max-width: min(42vw, 340px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-user-chevron {
+  width: 16px;
+  height: 16px;
+}
+
+.app-user-dropdown {
+  position: absolute;
+  top: calc(100% + 0.45rem);
+  right: 0;
+  min-width: 200px;
+  border-radius: 0.85rem;
+  border: 1px solid #334155;
+  background: #0b1120;
+  padding: 0.35rem;
+  box-shadow: 0 18px 38px rgba(2, 6, 23, 0.55);
+  z-index: 30;
+}
+
+.app-user-action {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  border: none;
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.65rem;
+  color: #e2e8f0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.app-user-action:hover {
+  background: rgba(56, 189, 248, 0.12);
+}
+
+.app-user-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .environment-pill {
@@ -128,38 +217,49 @@ a {
 
 .marketing-shell {
   min-height: 100vh;
-  background:
-    radial-gradient(600px 320px at 15% 10%, rgba(14, 116, 144, 0.25), transparent 60%),
-    radial-gradient(500px 260px at 82% 18%, rgba(30, 64, 175, 0.2), transparent 65%),
-    linear-gradient(180deg, #050a16 0%, #0b1220 45%, #0f172a 100%);
-  color: #e5eefb;
+  background: #ffffff;
+  color: #0f172a;
 }
 
 .marketing-header {
-  max-width: 1120px;
-  margin: 0 auto;
-  padding: 1.4rem 1.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.45rem 1rem;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  justify-content: flex-start;
+  gap: 0.75rem;
+  background: #0b1220;
+  border-bottom: 1px solid #1f2937;
 }
 
 .marketing-brand {
-  width: 180px;
-  display: inline-flex;
-  align-items: center;
+  width: 220px;
+  height: 68px;
+  display: block;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  border-radius: 0;
+  line-height: 0;
+  flex: 0 0 auto;
 }
 
-.marketing-brand img {
+.marketing-logo {
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  display: block;
 }
 
 .marketing-nav {
   display: flex;
-  gap: 1rem;
-  font-size: 0.95rem;
+  gap: 0.85rem;
+  font-size: 0.92rem;
+  margin-left: 0.35rem;
+  margin-right: auto;
 }
 
 .marketing-nav a {
@@ -176,6 +276,10 @@ a {
   padding: 2.2rem 1.5rem 3rem;
   display: grid;
   gap: 1.2rem;
+  background: #ffffff;
+  color: #0f172a;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .marketing-page {
@@ -206,7 +310,15 @@ a {
 .marketing-hero p,
 .marketing-page p {
   margin: 0;
-  color: #9fb3cf;
+  color: #334155;
+}
+
+.marketing-hero h1,
+.marketing-page h1,
+.marketing-page h2,
+.marketing-card h2,
+.marketing-band h2 {
+  color: #0f172a;
 }
 
 .marketing-actions {
@@ -232,8 +344,8 @@ a {
 
 .marketing-button-secondary {
   background: transparent;
-  color: #cfe8ff;
-  border-color: rgba(125, 211, 252, 0.45);
+  color: #0f172a;
+  border-color: rgba(15, 23, 42, 0.25);
 }
 
 .marketing-diagram {
@@ -261,9 +373,9 @@ a {
 }
 
 .marketing-card {
-  border: 1px solid rgba(71, 85, 105, 0.65);
+  border: 1px solid rgba(15, 23, 42, 0.15);
   border-radius: 0.95rem;
-  background: rgba(15, 23, 42, 0.82);
+  background: #ffffff;
   padding: 1rem 1.1rem;
   display: grid;
   gap: 0.45rem;
@@ -277,19 +389,19 @@ a {
 .marketing-card p,
 .pricing-price {
   margin: 0;
-  color: #a4bad7;
+  color: #334155;
 }
 
 .pricing-price {
   font-size: 1.35rem;
-  color: #d8f6ff;
+  color: #0f172a;
 }
 
 .marketing-band {
-  border: 1px solid rgba(125, 211, 252, 0.35);
+  border: 1px solid rgba(15, 23, 42, 0.2);
   border-radius: 1rem;
   padding: 1.1rem 1.2rem;
-  background: linear-gradient(145deg, rgba(14, 116, 144, 0.2), rgba(15, 23, 42, 0.92));
+  background: #f8fafc;
   display: grid;
   gap: 0.45rem;
 }
@@ -301,7 +413,7 @@ a {
 
 .marketing-band p {
   margin: 0;
-  color: #b8cbe2;
+  color: #334155;
 }
 
 .marketing-footer {
@@ -312,12 +424,13 @@ a {
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 1rem;
-  color: #9bb0ca;
+  color: #334155;
+  border-top: 1px solid #e2e8f0;
 }
 
 .marketing-footer strong {
   font-size: 1.05rem;
-  color: #e2eefb;
+  color: #0f172a;
 }
 
 .marketing-footer p {
@@ -328,6 +441,34 @@ a {
   display: flex;
   gap: 1rem;
   align-items: center;
+}
+
+/* App shell uses these shared utility classes and should remain dark-themed. */
+.app-shell .marketing-card {
+  border: 1px solid rgba(71, 85, 105, 0.65);
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.app-shell .marketing-card h2 {
+  color: #e2e8f0;
+}
+
+.app-shell .marketing-card p,
+.app-shell .pricing-price {
+  color: #a4bad7;
+}
+
+.app-shell .marketing-band {
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  background: linear-gradient(145deg, rgba(14, 116, 144, 0.2), rgba(15, 23, 42, 0.92));
+}
+
+.app-shell .marketing-band h2 {
+  color: #e2e8f0;
+}
+
+.app-shell .marketing-band p {
+  color: #b8cbe2;
 }
 
 @media (max-width: 980px) {
@@ -342,12 +483,33 @@ a {
     border-bottom: 1px solid #1f2937;
   }
 
+  .sidebar-brand {
+    height: 150px;
+  }
+
+
+  .app-user-email {
+    max-width: 62vw;
+  }
+
+  .sidebar-account-menu .app-user-email {
+    max-width: 62vw;
+  }
+
   .marketing-header {
     flex-wrap: wrap;
+    padding: 0.5rem 0.75rem;
+  }
+
+  .marketing-brand {
+    width: min(100%, 210px);
+    height: 64px;
   }
 
   .marketing-nav {
-    width: 100%;
     flex-wrap: wrap;
+    margin-left: 0;
+    margin-right: 0;
+    width: 100%;
   }
 }

@@ -1,0 +1,12 @@
+<svg width="1200" height="260" viewBox="0 0 1200 260" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="dispatchiqTitle">
+  <title id="dispatchiqTitle">DispatchIQ</title>
+  <text
+    x="20"
+    y="178"
+    font-family="Segoe UI, Helvetica Neue, Arial, sans-serif"
+    font-size="172"
+    font-weight="700"
+  >
+    <tspan fill="#FFFFFF" font-weight="700">Dispatch</tspan><tspan fill="#38BDF8" dx="-4" font-family="Arial Black, Segoe UI, Helvetica Neue, Arial, sans-serif" font-weight="900" stroke="#38BDF8" stroke-width="1.6" paint-order="stroke fill">IQ</tspan>
+  </text>
+</svg>

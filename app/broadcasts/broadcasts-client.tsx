@@ -264,8 +264,8 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
                 color: "#e2e8f0"
               }}
             >
-              <option value="TEST">Test Mode</option>
-              <option value="PRODUCTION">Production Mode</option>
+              <option value="TEST">Sandbox</option>
+              <option value="PRODUCTION">Live</option>
             </select>
           </label>
         </div>

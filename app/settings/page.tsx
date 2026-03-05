@@ -13,12 +13,11 @@ export default async function SettingsPage() {
       <h1 style={{ marginBottom: "1rem" }}>Settings</h1>
       <p style={{ marginBottom: "2rem", lineHeight: 1.5 }}>
         Manage workspace configuration for the Email Autopilot demo. Secrets are stored server-side and the
-        mode defaults to Test Mode so sends remain in resend.dev inboxes.
+        mode defaults to Sandbox so sends remain in resend.dev inboxes.
       </p>
       <SettingsForm
         initialSettings={{
           mode: settings.mode,
-          testModeEnabled: settings.testModeEnabled,
           hasResendApiKey: settings.hasResendApiKey,
           resendLastValidatedAt: settings.resendLastValidatedAt?.toISOString() ?? null,
           webhookEnabled: settings.webhookEnabled,

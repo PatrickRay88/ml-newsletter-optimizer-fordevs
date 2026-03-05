@@ -32,7 +32,7 @@ export async function PUT(request: Request) {
 
   if (!body.mode || !isWorkspaceMode(body.mode)) {
     return NextResponse.json(
-      { message: "mode must be either TEST or PRODUCTION" },
+      { message: "mode must be TEST or PRODUCTION (Sandbox or Live)" },
       { status: 400 }
     );
   }

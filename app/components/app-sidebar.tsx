@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import AppUserMenu from "@/app/components/app-user-menu";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/app" },
@@ -13,8 +15,8 @@ const NAV_ITEMS = [
   { label: "Broadcasts", href: "/app/broadcasts" },
   { label: "Templates", href: "/app/templates" },
   { label: "Deliverability", href: "/app/deliverability" },
-  { label: "Billing", href: "/app/billing" },
-  { label: "Settings", href: "/app/settings" }
+  { label: "Dev Utilities", href: "/app/dev" },
+  { label: "Billing", href: "/app/billing" }
 ];
 
 function isActive(pathname: string, href: string): boolean {
@@ -30,7 +32,14 @@ export default function AppSidebar() {
   return (
     <aside className="app-sidebar">
       <div className="sidebar-brand">
-        <img src="/dispatchiq-logo.png" alt="DispatchIQ logo" className="sidebar-logo" />
+        <Image
+          src="/dispatchiq-logo.svg"
+          alt="DispatchIQ logo"
+          width={260}
+          height={120}
+          className="sidebar-logo"
+          priority
+        />
       </div>
 
       <div className="environment-pill">Sandbox Environment</div>
@@ -47,6 +56,9 @@ export default function AppSidebar() {
       </nav>
 
       <div className="sidebar-footer">
+        <div className="sidebar-account-menu">
+          <AppUserMenu />
+        </div>
         <p>Sandbox mode is isolated from Live and meant for integration validation.</p>
       </div>
     </aside>
