@@ -1,7 +1,7 @@
 html, body {
   margin: 0;
   padding: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
   background-color: #0f172a;
   color: #e2e8f0;
 }
@@ -115,6 +115,221 @@ a {
   background: radial-gradient(circle at top, rgba(56, 189, 248, 0.08), transparent 45%), #0f172a;
 }
 
+.environment-pill {
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
+  color: #bbf7d0;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  width: fit-content;
+  margin: 0 auto;
+}
+
+.marketing-shell {
+  min-height: 100vh;
+  background:
+    radial-gradient(600px 320px at 15% 10%, rgba(14, 116, 144, 0.25), transparent 60%),
+    radial-gradient(500px 260px at 82% 18%, rgba(30, 64, 175, 0.2), transparent 65%),
+    linear-gradient(180deg, #050a16 0%, #0b1220 45%, #0f172a 100%);
+  color: #e5eefb;
+}
+
+.marketing-header {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 1.4rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.marketing-brand {
+  width: 180px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.marketing-brand img {
+  width: 100%;
+  height: auto;
+}
+
+.marketing-nav {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.95rem;
+}
+
+.marketing-nav a {
+  color: #cbd5e1;
+}
+
+.marketing-nav a:hover {
+  color: #67e8f9;
+}
+
+.marketing-main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2.2rem 1.5rem 3rem;
+  display: grid;
+  gap: 1.2rem;
+}
+
+.marketing-page {
+  padding-top: 1.2rem;
+}
+
+.marketing-hero {
+  display: grid;
+  gap: 0.8rem;
+  max-width: 780px;
+}
+
+.marketing-eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #67e8f9;
+  font-size: 0.78rem;
+}
+
+.marketing-hero h1,
+.marketing-page h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  line-height: 1.1;
+}
+
+.marketing-hero p,
+.marketing-page p {
+  margin: 0;
+  color: #9fb3cf;
+}
+
+.marketing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.marketing-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.65rem 1.1rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.marketing-button-primary {
+  background: linear-gradient(135deg, #22d3ee, #0ea5e9);
+  color: #04203a;
+}
+
+.marketing-button-secondary {
+  background: transparent;
+  color: #cfe8ff;
+  border-color: rgba(125, 211, 252, 0.45);
+}
+
+.marketing-diagram {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(71, 85, 105, 0.6);
+  border-radius: 1rem;
+  padding: 1rem 1.2rem;
+  width: fit-content;
+}
+
+.marketing-diagram div {
+  border-radius: 0.65rem;
+  padding: 0.4rem 0.8rem;
+  background: rgba(30, 41, 59, 0.9);
+}
+
+.marketing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.9rem;
+}
+
+.marketing-card {
+  border: 1px solid rgba(71, 85, 105, 0.65);
+  border-radius: 0.95rem;
+  background: rgba(15, 23, 42, 0.82);
+  padding: 1rem 1.1rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.marketing-card h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.marketing-card p,
+.pricing-price {
+  margin: 0;
+  color: #a4bad7;
+}
+
+.pricing-price {
+  font-size: 1.35rem;
+  color: #d8f6ff;
+}
+
+.marketing-band {
+  border: 1px solid rgba(125, 211, 252, 0.35);
+  border-radius: 1rem;
+  padding: 1.1rem 1.2rem;
+  background: linear-gradient(145deg, rgba(14, 116, 144, 0.2), rgba(15, 23, 42, 0.92));
+  display: grid;
+  gap: 0.45rem;
+}
+
+.marketing-band h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.marketing-band p {
+  margin: 0;
+  color: #b8cbe2;
+}
+
+.marketing-footer {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+  color: #9bb0ca;
+}
+
+.marketing-footer strong {
+  font-size: 1.05rem;
+  color: #e2eefb;
+}
+
+.marketing-footer p {
+  margin: 0.3rem 0 0;
+}
+
+.marketing-footer-links {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
 @media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -125,5 +340,14 @@ a {
     height: auto;
     border-right: none;
     border-bottom: 1px solid #1f2937;
+  }
+
+  .marketing-header {
+    flex-wrap: wrap;
+  }
+
+  .marketing-nav {
+    width: 100%;
+    flex-wrap: wrap;
   }
 }

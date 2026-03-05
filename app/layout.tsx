@@ -1,11 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import Sidebar from "./components/sidebar";
-import Walkthrough from "./components/walkthrough";
 
 export const metadata: Metadata = {
-  title: "Email Autopilot",
-  description: "Data Mining 2 demo workspace for Resend-powered email autopilot"
+  title: "DispatchIQ",
+  description: "Optimization layer for developer email workflows"
 };
 
 export default function RootLayout({
@@ -15,15 +13,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body>
-        <div className="app-shell">
-          <Sidebar />
-          <div className="app-content">
-            <Walkthrough />
-            {children}
-          </div>
-        </div>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
