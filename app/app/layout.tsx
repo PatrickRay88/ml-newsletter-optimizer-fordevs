@@ -1,6 +1,7 @@
 import AppSidebar from "@/app/components/app-sidebar";
 import Walkthrough from "@/app/components/walkthrough";
 import { getSessionUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 export default async function ProductLayout({
   children
@@ -9,9 +10,13 @@ export default async function ProductLayout({
 }) {
   const sessionUser = await getSessionUser();
 
+  if (!sessionUser) {
+    redirect("/");
+  }
+
   return (
     <div className="app-shell">
-      <AppSidebar userEmail={sessionUser?.email ?? "patrick.d.ray.88@gmail.com"} />
+      <AppSidebar userEmail={sessionUser.email} />
       <div className="app-content">
         <Walkthrough />
         {children}
