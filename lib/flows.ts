@@ -9,18 +9,33 @@ import {
 import { prisma } from "./prisma";
 import { buildTagRecord } from "./broadcasts";
 import { recommendSendTime } from "./optimizer";
-import { ResendError, sendResendEmail } from "./resend";
+import { ResendError } from "./resend";
+import { resolveEmailEngineAdapter } from "./engines/adapter";
 
 const SCHEDULE_THRESHOLD_MS = 5 * 60 * 1000;
 
-let sendEmail = sendResendEmail;
+type SendEmailImplementation = (params: {
+  to: string;
+  subject: string;
+  html: string;
+  from?: string;
+  tags?: Record<string, string>;
+}) => Promise<{ id: string }>;
 
-export function setSendEmailImplementation(implementation: typeof sendResendEmail) {
+const defaultSendEmailImplementation: SendEmailImplementation = async (params) => {
+  const engine = resolveEmailEngineAdapter();
+  const result = await engine.sendEmail(params);
+  return { id: result.messageId };
+};
+
+let sendEmail: SendEmailImplementation = defaultSendEmailImplementation;
+
+export function setSendEmailImplementation(implementation: SendEmailImplementation) {
   sendEmail = implementation;
 }
 
 export function resetSendEmailImplementation() {
-  sendEmail = sendResendEmail;
+  sendEmail = defaultSendEmailImplementation;
 }
 
 type LoadedRun = Prisma.FlowRunGetPayload<{

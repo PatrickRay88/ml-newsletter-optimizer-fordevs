@@ -1,10 +1,45 @@
 import { ContactStatus, MessageStatus, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
+import { resolveEmailEngineAdapter } from "./engines/adapter";
 
 export type OutcomeType = "delivered" | "bounced" | "failed" | "complained" | "suppressed";
 
 const OUTCOME_TAG_PREFIX = "outcome=";
 const MAX_MINUTES_AFTER_SEND = 120;
+
+export function mapProviderLastEventToOutcome(lastEvent: string | undefined): OutcomeType | null {
+  if (!lastEvent) {
+    return null;
+  }
+
+  const normalized = lastEvent.trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.includes("complain") || normalized.includes("spam")) {
+    return "complained";
+  }
+
+  if (normalized.includes("suppress")) {
+    return "suppressed";
+  }
+
+  if (normalized.includes("bounce")) {
+    return "bounced";
+  }
+
+  if (normalized.includes("fail") || normalized.includes("reject") || normalized.includes("cancel")) {
+    return "failed";
+  }
+
+  if (normalized.includes("deliver")) {
+    return "delivered";
+  }
+
+  return null;
+}
 
 export type MessagePollingCandidate = {
   id: string;
@@ -136,6 +171,8 @@ function shouldSkipMessage(message: MessagePollingCandidate): boolean {
 }
 
 export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSummary> {
+  const emailEngine = resolveEmailEngineAdapter();
+
   const candidates = await prisma.message.findMany({
     where: {
       resendMessageId: {
@@ -169,7 +206,35 @@ export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSumma
       continue;
     }
 
-    const outcome = determineOutcome(message.contact);
+    let outcome: OutcomeType | null = null;
+
+    if (message.resendMessageId) {
+      try {
+        const providerStatus = await emailEngine.retrieveEmailStatus(message.resendMessageId);
+        if (providerStatus.success) {
+          outcome = mapProviderLastEventToOutcome(providerStatus.lastEvent);
+
+          // Non-terminal provider events should not mutate outcome rows.
+          if (!outcome) {
+            summary.unchanged += 1;
+            await prisma.message.update({
+              where: { id: message.id },
+              data: {
+                lastStatusCheckAt: new Date()
+              }
+            });
+            continue;
+          }
+        }
+      } catch (error) {
+        // Fall through to synthetic fallback mode.
+      }
+    }
+
+    if (!outcome) {
+      outcome = determineOutcome(message.contact);
+    }
+
     const updateStatus = messageStatusForOutcome(outcome);
     const existing = await prisma.messageOutcome.findUnique({ where: { messageId: message.id } });
 

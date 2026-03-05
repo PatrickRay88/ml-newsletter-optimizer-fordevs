@@ -1,6 +1,7 @@
 import { BroadcastStatus, ContactStatus, MessageStatus, Prisma, WorkspaceMode } from "@prisma/client";
 import { prisma } from "./prisma";
-import { ResendError, sendResendEmail } from "./resend";
+import { ResendError } from "./resend";
+import { resolveEmailEngineAdapter } from "./engines/adapter";
 import { recommendSendTime } from "./optimizer";
 
 const ALL_CONTACTS_SEGMENT_NAME = "All Contacts";
@@ -156,6 +157,8 @@ function createEmptyOptimizerSummary(): OptimizerSendSummary {
 }
 
 export async function sendBroadcastById(broadcastId: string, options?: BroadcastSendOptions): Promise<BroadcastSendSummary> {
+  const emailEngine = resolveEmailEngineAdapter();
+
   const broadcast = await prisma.broadcast.findUnique({
     where: { id: broadcastId },
     include: {
@@ -294,7 +297,7 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
         continue;
       }
 
-      const sendResult = await sendResendEmail({
+      const sendResult = await emailEngine.sendEmail({
         to: contact.email as string,
         subject: broadcast.template.subject,
         html: broadcast.template.html,
@@ -302,13 +305,13 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
       });
 
       const sentAt = new Date();
-      messageIds.push(sendResult.id);
+      messageIds.push(sendResult.messageId);
       optimizerSummary.sentImmediately += 1;
       messageRows.push({
         broadcastId,
         contactId: contact.id,
         templateId: broadcast.templateId,
-        resendMessageId: sendResult.id,
+        resendMessageId: sendResult.messageId,
         status: MessageStatus.SENT,
         scheduledSendAt: recommendedAt ?? undefined,
         sentAt,

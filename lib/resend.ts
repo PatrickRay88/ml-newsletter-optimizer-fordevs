@@ -43,6 +43,13 @@ export type ResendSendResult = {
   id: string;
 };
 
+export type ResendRetrieveResult = {
+  success: boolean;
+  status: number;
+  message: string;
+  lastEvent?: string;
+};
+
 export function mapResendErrorMessage(status: number, body: ErrorBody | null): string {
   if (body?.message) {
     return body.message;
@@ -182,6 +189,70 @@ export async function testResendConnection(): Promise<ResendTestResult> {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to reach Resend";
     await updateResendValidationTimestamp(null);
+    return {
+      success: false,
+      status: 0,
+      message
+    };
+  }
+}
+
+function extractRetrievePayload(body: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!body) {
+    return null;
+  }
+
+  if (typeof body.data === "object" && body.data !== null) {
+    return body.data as Record<string, unknown>;
+  }
+
+  return body;
+}
+
+export async function retrieveResendEmailStatus(messageId: string): Promise<ResendRetrieveResult> {
+  const apiKey = await getResendApiKey();
+
+  if (!apiKey) {
+    return {
+      success: false,
+      status: 400,
+      message: "Resend API key is not configured"
+    };
+  }
+
+  try {
+    const response = await fetch(`${RESEND_API_BASE_URL}${RESEND_EMAILS_ENDPOINT}/${messageId}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json"
+      }
+    });
+
+    const contentType = response.headers.get("content-type");
+    const isJson = contentType?.includes("application/json");
+    const body = isJson ? ((await response.json()) as Record<string, unknown>) : null;
+
+    if (!response.ok) {
+      const message = mapResendErrorMessage(response.status, body as ErrorBody | null);
+      return {
+        success: false,
+        status: response.status,
+        message
+      };
+    }
+
+    const payload = extractRetrievePayload(body);
+    const lastEvent = payload && typeof payload.last_event === "string" ? payload.last_event : undefined;
+
+    return {
+      success: true,
+      status: response.status,
+      message: "Resend email status retrieved",
+      lastEvent
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unable to retrieve email status from Resend";
     return {
       success: false,
       status: 0,

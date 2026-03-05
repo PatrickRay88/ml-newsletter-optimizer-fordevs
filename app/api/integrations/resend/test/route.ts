@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { getSettingsSummary } from "@/lib/settings";
-import { testResendConnection } from "@/lib/resend";
+import { resolveEmailEngineAdapter } from "@/lib/engines/adapter";
 
 export async function POST() {
   try {
-    const result = await testResendConnection();
+    const engine = resolveEmailEngineAdapter();
+    const result = await engine.testConnection();
     const summary = await getSettingsSummary();
 
     const status = result.success ? 200 : result.status || 502;
