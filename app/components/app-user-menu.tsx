@@ -6,7 +6,11 @@ import { useEffect, useRef, useState } from "react";
 
 const PLACEHOLDER_EMAIL = "patrick.d.ray.88@gmail.com";
 
-export default function AppUserMenu() {
+type AppUserMenuProps = {
+  email?: string;
+};
+
+export default function AppUserMenu({ email = PLACEHOLDER_EMAIL }: AppUserMenuProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -38,7 +42,7 @@ export default function AppUserMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
       >
-        <span className="app-user-email">{PLACEHOLDER_EMAIL}</span>
+        <span className="app-user-email">{email}</span>
         <svg viewBox="0 0 24 24" aria-hidden="true" className="app-user-chevron">
           <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
         </svg>

@@ -26,7 +26,11 @@ function isActive(pathname: string, href: string): boolean {
   return pathname.startsWith(href);
 }
 
-export default function AppSidebar() {
+type AppSidebarProps = {
+  userEmail: string;
+};
+
+export default function AppSidebar({ userEmail }: AppSidebarProps) {
   const pathname = usePathname();
 
   return (
@@ -57,7 +61,7 @@ export default function AppSidebar() {
 
       <div className="sidebar-footer">
         <div className="sidebar-account-menu">
-          <AppUserMenu />
+          <AppUserMenu email={userEmail} />
         </div>
         <p>Sandbox mode is isolated from Live and meant for integration validation.</p>
       </div>
