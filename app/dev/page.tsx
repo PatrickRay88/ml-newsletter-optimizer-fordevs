@@ -49,7 +49,11 @@ type ModelSummary = {
     pooledBroadcasts: number;
     sentMessages: number;
     optimizedMessages: number;
+    controlMessages?: number;
+    treatedMessages?: number;
+    assignedMessages?: number;
     optimizationCoveragePct: number;
+    assignmentCoveragePct?: number;
     deliveredOptimized: number;
     clickedOptimized: number;
     deliveredControl: number;
@@ -416,15 +420,18 @@ export default function DevUtilitiesPage() {
                         <div>Expected uplift: {formatPercent(model?.expectedUpliftPct)}</div>
                         <div>Pooled broadcasts: {model?.pooledPerformance?.pooledBroadcasts ?? 0}</div>
                         <div>
-                          Coverage: {formatPercent(model?.pooledPerformance?.optimizationCoveragePct)} ({model?.pooledPerformance?.optimizedMessages ?? 0}/{model?.pooledPerformance?.sentMessages ?? 0} sent messages)
+                          Cohorts: optimized {model?.pooledPerformance?.optimizedMessages ?? 0}, control {model?.pooledPerformance?.controlMessages ?? 0}, treated {model?.pooledPerformance?.treatedMessages ?? 0}
                         </div>
                         <div>
-                          Realized CTR (optimized): {formatPercent(model?.pooledPerformance?.actualCtrPct)} ({model?.pooledPerformance?.clickedOptimized ?? 0}/{model?.pooledPerformance?.deliveredOptimized ?? 0})
+                          Assignment coverage: {formatPercent(model?.pooledPerformance?.assignmentCoveragePct ?? model?.pooledPerformance?.optimizationCoveragePct)} ({model?.pooledPerformance?.assignedMessages ?? 0}/{model?.pooledPerformance?.sentMessages ?? 0} sent messages)
                         </div>
                         <div>
-                          Realized CTR (control): {formatPercent(model?.pooledPerformance?.controlCtrPct)} ({model?.pooledPerformance?.clickedControl ?? 0}/{model?.pooledPerformance?.deliveredControl ?? 0})
+                          Realized CTR (optimized cohort): {formatPercent(model?.pooledPerformance?.actualCtrPct)} ({model?.pooledPerformance?.clickedOptimized ?? 0}/{model?.pooledPerformance?.deliveredOptimized ?? 0})
                         </div>
-                        <div>Realized uplift vs control: {formatPercent(model?.pooledPerformance?.upliftVsControlPct)}</div>
+                        <div>
+                          Realized CTR (control cohort): {formatPercent(model?.pooledPerformance?.controlCtrPct)} ({model?.pooledPerformance?.clickedControl ?? 0}/{model?.pooledPerformance?.deliveredControl ?? 0})
+                        </div>
+                        <div>Realized uplift (optimized vs control cohorts): {formatPercent(model?.pooledPerformance?.upliftVsControlPct)}</div>
                         <div>
                           Baseline CTR (synthetic): {formatPercent(model?.pooledPerformance?.baselineCtrPct)} ({model?.pooledPerformance?.baselineSamples ?? 0} samples)
                         </div>

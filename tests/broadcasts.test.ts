@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { ContactStatus } from "@prisma/client";
-import { buildTagRecord, formatBroadcastSummary, partitionContactsByEligibility } from "@/lib/broadcasts";
+import {
+  assignOptimizerExperimentCohort,
+  buildTagRecord,
+  formatBroadcastSummary,
+  partitionContactsByEligibility
+} from "@/lib/broadcasts";
 
 describe("partitionContactsByEligibility", () => {
   it("excludes suppressed, complained, and contacts without email", () => {
@@ -100,5 +105,19 @@ describe("buildTagRecord", () => {
 
     assert.equal(record.tag_1, "kept_tag");
     assert.equal(Object.keys(record).length, 1);
+  });
+});
+
+describe("assignOptimizerExperimentCohort", () => {
+  it("returns deterministic cohort per broadcast/contact pair", () => {
+    const first = assignOptimizerExperimentCohort("broadcast-1", "contact-1");
+    const second = assignOptimizerExperimentCohort("broadcast-1", "contact-1");
+
+    assert.equal(first, second);
+  });
+
+  it("supports explicit all-control or all-optimized ratios", () => {
+    assert.equal(assignOptimizerExperimentCohort("b", "c", 1), "control");
+    assert.equal(assignOptimizerExperimentCohort("b", "c", 0), "optimized");
   });
 });
