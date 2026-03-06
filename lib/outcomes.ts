@@ -1,11 +1,12 @@
-import { ContactStatus, MessageStatus, Prisma } from "@prisma/client";
+import { ContactStatus, MessageStatus, Prisma, WorkspaceMode } from "@prisma/client";
 import { prisma } from "./prisma";
 import { resolveEmailEngineAdapter } from "./engines/adapter";
 
 export type OutcomeType = "delivered" | "bounced" | "failed" | "complained" | "suppressed";
 
 const OUTCOME_TAG_PREFIX = "outcome=";
-const MAX_MINUTES_AFTER_SEND = 120;
+const MAX_MINUTES_AFTER_SEND = 7 * 24 * 60;
+const SYNTHETIC_FALLBACK_GRACE_MINUTES = 0;
 
 export function mapProviderLastEventToOutcome(lastEvent: string | undefined): OutcomeType | null {
   if (!lastEvent) {
@@ -46,10 +47,16 @@ export type MessagePollingCandidate = {
   contactId: string;
   resendMessageId: string | null;
   sentAt: Date | null;
+  broadcast: {
+    sendMode: WorkspaceMode;
+  } | null;
   contact: {
     id: string;
+    email: string;
     tags: string[];
     status: ContactStatus;
+    lifecycleStage: string | null;
+    propensity: Prisma.Decimal | null;
   };
 };
 
@@ -125,7 +132,120 @@ function messageStatusForOutcome(outcome: OutcomeType): MessageStatus {
   return MessageStatus.FAILED;
 }
 
-function applyOutcomeTimestamps(outcome: OutcomeType): Prisma.MessageOutcomeUncheckedCreateInput {
+function extractNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  if (value && typeof value === "object" && "toString" in (value as Record<string, unknown>)) {
+    const asString = (value as { toString(): string }).toString();
+    const parsed = Number(asString);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function stringHash(input: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function createDeterministicRng(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0xffffffff;
+  };
+}
+
+function segmentFactor(lifecycleStage: string | null): number {
+  if (lifecycleStage === "trial") {
+    return 1.2;
+  }
+  if (lifecycleStage === "inactive") {
+    return 0.6;
+  }
+  return 1.0;
+}
+
+function timeFactor(sentAt: Date): number {
+  const hour = sentAt.getUTCHours();
+  if (hour >= 13 && hour <= 17) {
+    return 1.15;
+  }
+  if (hour >= 8 && hour <= 20) {
+    return 1.0;
+  }
+  return 0.75;
+}
+
+type SyntheticClickDetails = {
+  probability: number;
+  baselineProbability: number;
+  clickedAt: Date | null;
+  clickProbability: Prisma.Decimal;
+};
+
+function buildSyntheticClickDetails(message: MessagePollingCandidate): SyntheticClickDetails {
+  const basePropensity = clamp(extractNumber(message.contact.propensity) ?? 0.35, 0.01, 0.95);
+  const segFactor = segmentFactor(message.contact.lifecycleStage);
+  const sentAt = message.sentAt ?? new Date();
+  const adaptiveTimeFactor = timeFactor(sentAt);
+  const baselineTimeFactor = 0.9;
+
+  const probability = clamp(basePropensity * segFactor * adaptiveTimeFactor, 0.01, 0.95);
+  const baselineProbability = clamp(basePropensity * segFactor * baselineTimeFactor, 0.01, 0.95);
+
+  const rng = createDeterministicRng(stringHash(`${message.id}:${message.contact.email}`));
+  const clicked = rng() < probability;
+  const minuteOffset = 5 + Math.floor(rng() * 175);
+  const clickedAt = clicked ? new Date(sentAt.getTime() + minuteOffset * 60 * 1000) : null;
+
+  return {
+    probability,
+    baselineProbability,
+    clickedAt,
+    clickProbability: new Prisma.Decimal(probability.toFixed(4))
+  };
+}
+
+function isSandboxCandidate(message: MessagePollingCandidate): boolean {
+  if (message.broadcast?.sendMode === WorkspaceMode.TEST) {
+    return true;
+  }
+
+  const email = message.contact.email.toLowerCase();
+  if (email.endsWith("@resend.dev")) {
+    return true;
+  }
+
+  return message.contact.tags.some((tag) =>
+    tag === "synthetic" ||
+    tag === "test-list" ||
+    tag.startsWith("segment=") ||
+    tag.startsWith(OUTCOME_TAG_PREFIX)
+  );
+}
+
+function applyOutcomeTimestamps(
+  outcome: OutcomeType,
+  syntheticDetails?: SyntheticClickDetails
+): Prisma.MessageOutcomeUncheckedCreateInput {
   const now = new Date();
   const timestamps: Prisma.MessageOutcomeUncheckedCreateInput = {
     messageId: "",
@@ -134,10 +254,17 @@ function applyOutcomeTimestamps(outcome: OutcomeType): Prisma.MessageOutcomeUnch
     failedAt: null,
     complainedAt: null,
     suppressedAt: null,
-    clickProbability: null,
-    clickedAt: null,
+    clickProbability: syntheticDetails?.clickProbability ?? null,
+    clickedAt: syntheticDetails?.clickedAt ?? null,
     lastEvent: outcome,
-    metadata: { expected: outcome }
+    metadata: syntheticDetails
+      ? {
+          expected: outcome,
+          synthetic: true,
+          probability: syntheticDetails.probability,
+          baselineProbability: syntheticDetails.baselineProbability
+        }
+      : { expected: outcome }
   };
 
   if (outcome === "delivered") {
@@ -180,15 +307,30 @@ export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSumma
       },
       status: {
         in: [MessageStatus.SENT, MessageStatus.PENDING]
+      },
+      outcome: {
+        is: null
       }
     },
+    orderBy: [
+      { sentAt: "asc" },
+      { createdAt: "asc" }
+    ],
     take: batchSize,
     include: {
+      broadcast: {
+        select: {
+          sendMode: true
+        }
+      },
       contact: {
         select: {
           id: true,
+          email: true,
           tags: true,
-          status: true
+          status: true,
+          lifecycleStage: true,
+          propensity: true
         }
       }
     }
@@ -207,6 +349,8 @@ export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSumma
     }
 
     let outcome: OutcomeType | null = null;
+    const sandboxCandidate = isSandboxCandidate(message);
+    const sentMinutesAgo = message.sentAt ? (Date.now() - message.sentAt.getTime()) / 60000 : Infinity;
 
     if (message.resendMessageId) {
       try {
@@ -216,14 +360,19 @@ export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSumma
 
           // Non-terminal provider events should not mutate outcome rows.
           if (!outcome) {
-            summary.unchanged += 1;
-            await prisma.message.update({
-              where: { id: message.id },
-              data: {
-                lastStatusCheckAt: new Date()
-              }
-            });
-            continue;
+            // Sandbox traffic uses deterministic synthetic outcomes once a brief grace period has passed.
+            if (sandboxCandidate && sentMinutesAgo >= SYNTHETIC_FALLBACK_GRACE_MINUTES) {
+              outcome = determineOutcome(message.contact);
+            } else {
+              summary.unchanged += 1;
+              await prisma.message.update({
+                where: { id: message.id },
+                data: {
+                  lastStatusCheckAt: new Date()
+                }
+              });
+              continue;
+            }
           }
         }
       } catch (error) {
@@ -249,7 +398,10 @@ export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSumma
       continue;
     }
 
-    const createPayload = mergeOutcomeCreate(message.id, applyOutcomeTimestamps(outcome));
+    const syntheticDetails = sandboxCandidate && outcome === "delivered"
+      ? buildSyntheticClickDetails(message)
+      : undefined;
+    const createPayload = mergeOutcomeCreate(message.id, applyOutcomeTimestamps(outcome, syntheticDetails));
 
     if (existing) {
       await prisma.messageOutcome.update({
@@ -260,6 +412,8 @@ export async function pollPendingMessages(batchSize = 100): Promise<OutcomeSumma
           failedAt: createPayload.failedAt,
           complainedAt: createPayload.complainedAt,
           suppressedAt: createPayload.suppressedAt,
+          clickProbability: createPayload.clickProbability,
+          clickedAt: createPayload.clickedAt,
           lastEvent: createPayload.lastEvent,
           metadata: createPayload.metadata
         }

@@ -15,12 +15,12 @@ describe("partitionContactsByEligibility", () => {
 
     const result = partitionContactsByEligibility(contacts);
 
-    assert.equal(result.sendable.length, 2);
+    assert.equal(result.sendable.length, 1);
     assert.deepEqual(
       result.sendable.map((contact) => contact.id),
-      ["1", "5"]
+      ["1"]
     );
-    assert.equal(result.skipped.length, 3);
+    assert.equal(result.skipped.length, 4);
   });
 });
 
@@ -31,6 +31,7 @@ describe("formatBroadcastSummary", () => {
       totalRecipients: 5,
       skippedRecipients: 1,
       scheduledRecipients: 2,
+      sendStrategy: "bulk",
       alreadySent: false,
       durationMs: 42,
       messageIds: ["mid-1", "mid-2", "mid-3"],
@@ -44,7 +45,7 @@ describe("formatBroadcastSummary", () => {
       }
     });
 
-    assert.equal(summary, "Broadcast processed: 3 sent now, 2 scheduled, 1 skipped, optimizer evaluated 5");
+    assert.equal(summary, "Broadcast processed: 3 sent now, 2 scheduled, 1 skipped, optimizer evaluated 5, bulk mode");
   });
 
   it("reports already processed broadcasts", () => {
@@ -53,6 +54,7 @@ describe("formatBroadcastSummary", () => {
       totalRecipients: 0,
       skippedRecipients: 0,
       scheduledRecipients: 0,
+      sendStrategy: "individual",
       alreadySent: true,
       durationMs: 0,
       messageIds: [],
@@ -83,5 +85,20 @@ describe("buildTagRecord", () => {
 
   it("returns undefined for empty tags", () => {
     assert.equal(buildTagRecord([]), undefined);
+  });
+
+  it("sanitizes tags for provider-safe ASCII format", () => {
+    const record = buildTagRecord(["outcome=delivered", "segment=trial", "free form tag"]) ?? {};
+
+    assert.equal(record.tag_1, "outcome-delivered");
+    assert.equal(record.tag_2, "segment-trial");
+    assert.equal(record.tag_3, "free-form-tag");
+  });
+
+  it("drops tags that become empty after sanitation", () => {
+    const record = buildTagRecord(["===", "!!!", "kept_tag"]) ?? {};
+
+    assert.equal(record.tag_1, "kept_tag");
+    assert.equal(Object.keys(record).length, 1);
   });
 });

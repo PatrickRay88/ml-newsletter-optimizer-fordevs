@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { BroadcastStatus, WorkspaceMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { BroadcastSendStrategy } from "@/lib/broadcasts";
 import { createBroadcastDraft, formatBroadcastSummary, sendBroadcastById } from "@/lib/broadcasts";
 import { ResendError } from "@/lib/resend";
 import { recordTestBroadcastSent } from "@/lib/settings";
@@ -8,13 +9,19 @@ import { recordTestBroadcastSent } from "@/lib/settings";
 const TEST_BROADCAST_NAME = "Onboarding Test Broadcast";
 
 async function ensureTestBroadcast(): Promise<string> {
-  const existing = await prisma.broadcast.findFirst({
+  const existingDraft = await prisma.broadcast.findFirst({
     where: { name: TEST_BROADCAST_NAME },
-    orderBy: { createdAt: "desc" }
+    orderBy: { createdAt: "desc" },
+    include: {
+      messages: {
+        select: { id: true },
+        take: 1
+      }
+    }
   });
 
-  if (existing && existing.status !== BroadcastStatus.SENT) {
-    return existing.id;
+  if (existingDraft && existingDraft.status === BroadcastStatus.DRAFT && existingDraft.messages.length === 0) {
+    return existingDraft.id;
   }
 
   const created = await createBroadcastDraft({
@@ -45,6 +52,37 @@ function resolveUseOptimizer(request: Request, body: unknown): boolean | undefin
     }
   }
 
+  // Onboarding defaults to immediate send so Sandbox outcomes are observable without waiting on schedule dispatch.
+  return false;
+}
+
+function normalizeSendStrategy(value: unknown): BroadcastSendStrategy | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "bulk") {
+    return "bulk";
+  }
+  if (normalized === "individual") {
+    return "individual";
+  }
+
+  return undefined;
+}
+
+function resolveSendStrategy(request: Request, body: unknown): BroadcastSendStrategy | undefined {
+  const url = new URL(request.url);
+  const strategyFromQuery = normalizeSendStrategy(url.searchParams.get("strategy"));
+  if (strategyFromQuery) {
+    return strategyFromQuery;
+  }
+
+  if (body && typeof body === "object" && "sendStrategy" in body) {
+    return normalizeSendStrategy((body as { sendStrategy?: unknown }).sendStrategy);
+  }
+
   return undefined;
 }
 
@@ -62,8 +100,10 @@ export async function POST(request: Request) {
     }
 
     const useOptimizer = resolveUseOptimizer(request, parsedBody);
+    const sendStrategy = resolveSendStrategy(request, parsedBody);
     const summary = await sendBroadcastById(broadcastId, {
-      useOptimizer
+      useOptimizer,
+      sendStrategy
     });
 
     if (!summary.alreadySent) {

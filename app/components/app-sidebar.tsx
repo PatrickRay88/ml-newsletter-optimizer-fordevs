@@ -46,6 +46,10 @@ export default function AppSidebar({ userEmail }: AppSidebarProps) {
         />
       </div>
 
+      <div className="sidebar-account-menu sidebar-account-menu-top">
+        <AppUserMenu email={userEmail} />
+      </div>
+
       <div className="environment-pill">Sandbox Environment</div>
 
       <nav className="sidebar-nav">
@@ -60,9 +64,6 @@ export default function AppSidebar({ userEmail }: AppSidebarProps) {
       </nav>
 
       <div className="sidebar-footer">
-        <div className="sidebar-account-menu">
-          <AppUserMenu email={userEmail} />
-        </div>
         <p>Sandbox mode is isolated from Live and meant for integration validation.</p>
       </div>
     </aside>

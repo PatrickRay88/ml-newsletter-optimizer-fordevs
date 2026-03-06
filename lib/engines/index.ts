@@ -5,6 +5,8 @@ export {
 } from "./adapter";
 export type { EmailEngineAdapter } from "./adapter";
 export type {
+  EmailBatchSendInput,
+  EmailBatchSendResult,
   EmailEngineProvider,
   EmailSendInput,
   EmailSendResult,

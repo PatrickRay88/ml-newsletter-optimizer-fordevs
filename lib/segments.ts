@@ -8,7 +8,8 @@ export type SegmentFilterDefinition =
   | { type: "last_event_within_days"; value: number };
 
 export type SegmentDefinition = {
-  filters: SegmentFilterDefinition[];
+  filters?: SegmentFilterDefinition[];
+  type?: string;
 };
 
 export type SegmentInput = {
@@ -108,6 +109,9 @@ export async function recomputeSegmentMembership(segmentId: string): Promise<{ t
     throw new Error("Segment definition missing");
   }
 
+  const filters = Array.isArray(definition.filters) ? definition.filters : [];
+  const isAllContactsDefinition = definition.type === "all";
+
   const contacts = await prisma.contact.findMany({
     select: {
       id: true,
@@ -118,9 +122,9 @@ export async function recomputeSegmentMembership(segmentId: string): Promise<{ t
     }
   });
 
-  const matches = definition.filters.length === 0
+  const matches = isAllContactsDefinition || filters.length === 0
     ? contacts
-    : contacts.filter((contact) => matchesFilters(contact, definition.filters));
+    : contacts.filter((contact) => matchesFilters(contact, filters));
 
   const createMembership = matches.length
     ? prisma.segmentMembership.createMany({
@@ -159,14 +163,27 @@ function hourOfWeek(date: Date): number {
 }
 
 export async function getSegmentHeatmap(segmentId: string): Promise<SegmentHeatmap> {
+  const segment = await prisma.segment.findUnique({
+    where: { id: segmentId },
+    select: { id: true, isSystem: true }
+  });
+
+  if (!segment) {
+    throw new Error("Segment not found");
+  }
+
   const messages = await prisma.message.findMany({
     where: {
       sentAt: { not: null },
-      contact: {
-        segmentMemberships: {
-          some: { segmentId }
-        }
-      }
+      ...(segment.isSystem
+        ? {}
+        : {
+            contact: {
+              segmentMemberships: {
+                some: { segmentId }
+              }
+            }
+          })
     },
     select: {
       sentAt: true,

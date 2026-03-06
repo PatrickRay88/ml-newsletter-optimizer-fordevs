@@ -13,12 +13,21 @@ export type BroadcastSummary = {
   createdAt: string;
   segment: string;
   template: string;
+  audienceSize?: number;
+  scheduledCount?: number;
+  scheduledPreview?: Array<{
+    scheduledAt: string;
+    count: number;
+    sampleEmails: string[];
+  }>;
   total: number;
   delivered: number;
   bounced: number;
   suppressed: number;
   clicked: number;
   ctr: number;
+  baselineCtr: number;
+  upliftPct: number;
 };
 
 type TemplateOption = {
@@ -38,7 +47,16 @@ type Props = {
   segments: SegmentOption[];
   broadcasts: BroadcastSummary[];
   defaultSendMode: WorkspaceModeValue;
+  schedulerStatus: {
+    state: "running" | "stale" | "idle";
+    lastRunAt: string | null;
+    nextDueScheduledAt: string | null;
+    queuedScheduled: number;
+    unresolvedOutcomes: number;
+  };
 };
+
+type SendStrategy = "individual" | "bulk";
 
 type Status = {
   type: "idle" | "loading" | "success" | "error";
@@ -55,11 +73,50 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatUplift(value: number, hasBaseline: boolean): string {
+  if (!hasBaseline) {
+    return "N/A";
+  }
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(1)}%`;
+}
+
 function formatDate(value: string | null): string {
   if (!value) {
     return "—";
   }
   return new Date(value).toLocaleString();
+}
+
+function formatCount(value: number | undefined, fallback = 0): string {
+  const resolved = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return resolved.toLocaleString();
+}
+
+function formatRelativeTime(value: string | null): string {
+  if (!value) {
+    return "Never";
+  }
+
+  const then = new Date(value).getTime();
+  if (!Number.isFinite(then)) {
+    return "Unknown";
+  }
+
+  const diffMs = Math.max(0, Date.now() - then);
+  const minutes = Math.floor(diffMs / 60000);
+  if (minutes < 1) {
+    return "just now";
+  }
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 function buildTimeline(broadcast: BroadcastSummary): TimelineItem[] {
@@ -101,7 +158,7 @@ function buildTimeline(broadcast: BroadcastSummary): TimelineItem[] {
   return items;
 }
 
-export default function BroadcastsClient({ templates, segments, broadcasts, defaultSendMode }: Props) {
+export default function BroadcastsClient({ templates, segments, broadcasts, defaultSendMode, schedulerStatus }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [status, setStatus] = useState<Status>({ type: "idle" });
@@ -109,6 +166,7 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
   const [templateId, setTemplateId] = useState(templates[0]?.id ?? "");
   const [segmentId, setSegmentId] = useState(segments.find((segment) => segment.isSystem)?.id ?? segments[0]?.id ?? "");
   const [sendMode, setSendMode] = useState<WorkspaceModeValue>(defaultSendMode);
+  const [sendStrategy, setSendStrategy] = useState<SendStrategy>("bulk");
 
   const canCreate = useMemo(() => Boolean(name.trim()) && Boolean(templateId) && Boolean(segmentId), [name, templateId, segmentId]);
 
@@ -146,8 +204,8 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
     async (broadcastId: string, useOptimizer: boolean) => {
       const confirmed = window.confirm(
         useOptimizer
-          ? "Send this broadcast at the recommended time?"
-          : "Send this broadcast immediately?"
+          ? `Send this broadcast with ${sendStrategy} strategy at the recommended time?`
+          : `Send this broadcast immediately with ${sendStrategy} strategy?`
       );
       if (!confirmed) {
         return;
@@ -157,7 +215,7 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
         const response = await fetch(`/api/broadcasts/${broadcastId}/send`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ useOptimizer })
+          body: JSON.stringify({ useOptimizer, sendStrategy })
         });
         const body = await response.json().catch(() => ({}));
         if (!response.ok || body.success === false) {
@@ -170,7 +228,7 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
         setStatus({ type: "error", message: error instanceof Error ? error.message : "Unable to send broadcast" });
       }
     },
-    [refresh]
+    [refresh, sendStrategy]
   );
 
   return (
@@ -178,9 +236,47 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
       <header style={{ display: "grid", gap: "0.5rem" }}>
         <h1 style={{ margin: 0 }}>Broadcasts</h1>
         <p style={{ margin: 0, color: "#94a3b8", maxWidth: "46rem" }}>
-          Schedule one-off sends to a segment. Use Send now for immediate delivery or Autopilot recommended time
+          Schedule one-off sends to a segment. Use Send now for immediate delivery or Use optimizer delivery window
           to apply the optimizer window.
         </p>
+        <div
+          style={{
+            marginTop: "0.5rem",
+            border: "1px solid #1f2937",
+            borderRadius: "0.75rem",
+            background: "#0b1220",
+            padding: "0.75rem 0.9rem",
+            display: "grid",
+            gap: "0.35rem"
+          }}
+        >
+          <strong
+            style={{
+              color:
+                schedulerStatus.state === "running"
+                  ? "#86efac"
+                  : schedulerStatus.state === "stale"
+                    ? "#fbbf24"
+                    : "#94a3b8"
+            }}
+          >
+            Scheduler: {schedulerStatus.state === "running" ? "Active" : schedulerStatus.state === "stale" ? "Stale" : "Not started"}
+          </strong>
+          <span style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
+            Last poll run: {formatRelativeTime(schedulerStatus.lastRunAt)}
+          </span>
+          <span style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
+            Next due scheduled at: {formatDate(schedulerStatus.nextDueScheduledAt)}
+          </span>
+          <span style={{ color: "#94a3b8", fontSize: "0.9rem" }}>
+            Queued scheduled: {schedulerStatus.queuedScheduled.toLocaleString()} • Pending outcomes: {schedulerStatus.unresolvedOutcomes.toLocaleString()}
+          </span>
+          {schedulerStatus.state !== "running" && (
+            <span style={{ color: "#fbbf24", fontSize: "0.85rem" }}>
+              Run `npm run dev:scheduler` locally or schedule `/api/jobs/poll-email-status` every 2-5 minutes.
+            </span>
+          )}
+        </div>
       </header>
 
       <section
@@ -268,6 +364,23 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
               <option value="PRODUCTION">Live</option>
             </select>
           </label>
+          <label style={{ display: "grid", gap: "0.35rem" }}>
+            <span>Delivery strategy</span>
+            <select
+              value={sendStrategy}
+              onChange={(event) => setSendStrategy(event.target.value as SendStrategy)}
+              style={{
+                padding: "0.65rem 0.75rem",
+                borderRadius: "0.6rem",
+                border: "1px solid #334155",
+                background: "#0f172a",
+                color: "#e2e8f0"
+              }}
+            >
+              <option value="bulk">Bulk batches</option>
+              <option value="individual">Individual throttled</option>
+            </select>
+          </label>
         </div>
         <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
           <button
@@ -332,12 +445,15 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
                   gap: "0.75rem"
                 }}
               >
-                <Metric label="Recipients" value={broadcast.total.toLocaleString()} />
-                <Metric label="Delivered" value={broadcast.delivered.toLocaleString()} />
-                <Metric label="Bounced" value={broadcast.bounced.toLocaleString()} />
-                <Metric label="Suppressed" value={broadcast.suppressed.toLocaleString()} />
-                <Metric label="Clicks" value={broadcast.clicked.toLocaleString()} />
+                <Metric label="Audience" value={formatCount(broadcast.audienceSize, broadcast.total)} />
+                <Metric label="Processed" value={formatCount(broadcast.total)} />
+                <Metric label="Delivered" value={formatCount(broadcast.delivered)} />
+                <Metric label="Bounced" value={formatCount(broadcast.bounced)} />
+                <Metric label="Suppressed" value={formatCount(broadcast.suppressed)} />
+                <Metric label="Clicks" value={formatCount(broadcast.clicked)} />
                 <Metric label="CTR" value={formatPercent(broadcast.ctr)} />
+                <Metric label="Baseline CTR" value={formatPercent(broadcast.baselineCtr)} />
+                <Metric label="Uplift" value={formatUplift(broadcast.upliftPct, broadcast.baselineCtr > 0)} />
               </dl>
 
               <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
@@ -372,9 +488,50 @@ export default function BroadcastsClient({ templates, segments, broadcasts, defa
                     cursor: isFinal ? "not-allowed" : "pointer"
                   }}
                 >
-                  Autopilot recommended time
+                  Use optimizer delivery window
                 </button>
               </div>
+
+              {(broadcast.scheduledPreview?.length ?? 0) > 0 && (
+                <div
+                  style={{
+                    borderTop: "1px solid #1f2937",
+                    paddingTop: "0.75rem",
+                    display: "grid",
+                    gap: "0.5rem"
+                  }}
+                >
+                  <strong>Scheduled Delivery Preview</strong>
+                  <p style={{ margin: 0, color: "#94a3b8" }}>
+                    {formatCount(broadcast.scheduledCount)} messages are queued across upcoming optimizer windows.
+                  </p>
+                  <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: "0.4rem" }}>
+                    {(broadcast.scheduledPreview ?? []).map((window) => (
+                      <li
+                        key={`${broadcast.id}-${window.scheduledAt}`}
+                        style={{
+                          display: "grid",
+                          gap: "0.2rem",
+                          border: "1px solid #1f2937",
+                          borderRadius: "0.5rem",
+                          padding: "0.55rem 0.65rem",
+                          background: "#0b1220"
+                        }}
+                      >
+                        <span style={{ color: "#cbd5f5", fontWeight: 600 }}>
+                          {formatDate(window.scheduledAt)} • {window.count.toLocaleString()} recipients
+                        </span>
+                        <span style={{ color: "#94a3b8", fontSize: "0.85rem" }}>
+                          Sample: {window.sampleEmails.slice(0, 3).join(", ") || "No sample emails"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p style={{ margin: 0, color: "#fbbf24", fontSize: "0.85rem" }}>
+                    Queued sends auto-dispatch when the poll scheduler runs.
+                  </p>
+                </div>
+              )}
 
               <div
                 style={{

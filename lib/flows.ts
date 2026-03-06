@@ -11,6 +11,8 @@ import { buildTagRecord } from "./broadcasts";
 import { recommendSendTime } from "./optimizer";
 import { ResendError } from "./resend";
 import { resolveEmailEngineAdapter } from "./engines/adapter";
+import { computeHygieneScore } from "./hygiene";
+import { buildHygieneFeatures, predictHygieneRisk } from "./hygiene_model";
 
 const SCHEDULE_THRESHOLD_MS = 5 * 60 * 1000;
 
@@ -67,11 +69,51 @@ export type CreateFlowInput = {
   delayMinutes?: number | null;
   segmentId?: string | null;
   useOptimizer?: boolean;
+  useHygieneModel?: boolean;
 };
 
 export type FlowOverview = Awaited<ReturnType<typeof getFlowsOverview>>[number];
 
+type FlowModelConfig = {
+  useSendTimeOptimizer: boolean;
+  useHygieneModel: boolean;
+};
+
+function readFlowModelConfig(metadata: Prisma.JsonValue | null | undefined, fallbackUseOptimizer: boolean): FlowModelConfig {
+  const config: FlowModelConfig = {
+    useSendTimeOptimizer: fallbackUseOptimizer,
+    useHygieneModel: false
+  };
+
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return config;
+  }
+
+  const root = metadata as Record<string, unknown>;
+  const ml = root.ml;
+  if (ml && typeof ml === "object" && !Array.isArray(ml)) {
+    const mlRecord = ml as Record<string, unknown>;
+    if (typeof mlRecord.sendTimeOptimizer === "boolean") {
+      config.useSendTimeOptimizer = mlRecord.sendTimeOptimizer;
+    }
+    if (typeof mlRecord.hygieneModel === "boolean") {
+      config.useHygieneModel = mlRecord.hygieneModel;
+    }
+  }
+
+  if (typeof root.useHygieneModel === "boolean") {
+    config.useHygieneModel = root.useHygieneModel;
+  }
+
+  return config;
+}
+
 export async function createFlowDefinition(input: CreateFlowInput) {
+  const modelConfig: FlowModelConfig = {
+    useSendTimeOptimizer: input.useOptimizer ?? true,
+    useHygieneModel: input.useHygieneModel ?? true
+  };
+
   const steps: Prisma.FlowStepCreateManyFlowInput[] = [];
   let order = 1;
 
@@ -96,9 +138,16 @@ export async function createFlowDefinition(input: CreateFlowInput) {
       status: FlowStatus.DRAFT,
       triggerEventName: input.triggerEventName,
       delayMinutes: input.delayMinutes ?? null,
-      useOptimizer: input.useOptimizer ?? true,
+      useOptimizer: modelConfig.useSendTimeOptimizer,
       segmentId: input.segmentId ?? null,
       templateId: input.templateId,
+      metadata: {
+        ml: {
+          sendTimeOptimizer: modelConfig.useSendTimeOptimizer,
+          hygieneModel: modelConfig.useHygieneModel
+        },
+        version: 1
+      },
       steps: { createMany: { data: steps } }
     },
     include: {
@@ -367,8 +416,7 @@ async function processSingleRun(run: LoadedRun, now: Date): Promise<RunResult> {
         continue;
       }
       case FlowStepType.SEND_TEMPLATE: {
-        await executeSendStep(run, now);
-        return { completed: true, rescheduled: false, cancelled: false };
+        return executeSendStep(run, now);
       }
       default: {
         pointer = getNextOrder(pointer, steps);
@@ -411,7 +459,113 @@ function getNextOrder(current: number, steps: { order: number }[]): number {
   return candidates[0];
 }
 
-async function executeSendStep(run: LoadedRun, now: Date) {
+function toNumber(value: Prisma.Decimal | number | null | undefined): number {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+  if (value && typeof value === "object") {
+    const parsed = Number(value.toString());
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+async function evaluateFlowHygiene(contactId: string, now: Date) {
+  const [contact, hygieneModel] = await Promise.all([
+    prisma.contact.findUnique({
+      where: { id: contactId },
+      select: {
+        id: true,
+        status: true,
+        tags: true,
+        lastEventAt: true,
+        lastMessageSentAt: true,
+        propensity: true,
+        suppressions: {
+          select: {
+            id: true,
+            reason: true
+          }
+        },
+        messages: {
+          select: {
+            sentAt: true,
+            outcome: {
+              select: {
+                clickedAt: true
+              }
+            }
+          }
+        }
+      }
+    }),
+    prisma.modelVersion.findFirst({
+      where: { modelName: "hygiene_v1" },
+      orderBy: { trainedAt: "desc" }
+    })
+  ]);
+
+  if (!contact) {
+    throw new Error("Contact not found for hygiene evaluation");
+  }
+
+  const modelMetadata = (hygieneModel?.metadata ?? {}) as { weights?: number[]; baseRate?: number };
+  const modelWeights = Array.isArray(modelMetadata.weights) ? modelMetadata.weights : null;
+  const baseRate = typeof modelMetadata.baseRate === "number" ? modelMetadata.baseRate : 0.05;
+
+  const totalSends = contact.messages.filter((message) => Boolean(message.sentAt)).length;
+  const deliveredNotClicked = contact.messages.filter(
+    (message) => Boolean(message.sentAt) && !message.outcome?.clickedAt
+  ).length;
+  const deliveredNotClickedRatio = totalSends > 0 ? deliveredNotClicked / totalSends : 0;
+
+  const featureVector = buildHygieneFeatures({
+    lastEventAt: contact.lastEventAt,
+    lastMessageSentAt: contact.lastMessageSentAt,
+    propensity: toNumber(contact.propensity),
+    deliveredNotClickedRatio,
+    now
+  }).features;
+
+  const modelScore = predictHygieneRisk(modelWeights, featureVector, baseRate);
+  const result = computeHygieneScore(
+    {
+      id: contact.id,
+      status: contact.status,
+      tags: contact.tags,
+      lastEventAt: contact.lastEventAt,
+      lastMessageSentAt: contact.lastMessageSentAt,
+      propensity: contact.propensity,
+      suppressions: contact.suppressions,
+      deliveredNotClickedRatio,
+      modelScore
+    },
+    now
+  );
+
+  await prisma.$transaction([
+    prisma.contact.update({
+      where: { id: contact.id },
+      data: {
+        hygieneRiskLevel: result.riskLevel,
+        hygieneScore: result.score
+      }
+    }),
+    prisma.hygieneEvaluation.create({
+      data: {
+        contactId: contact.id,
+        riskLevel: result.riskLevel,
+        score: result.score,
+        suppressed: result.shouldSuppress,
+        reasons: { reasons: result.reasons }
+      }
+    })
+  ]);
+
+  return result;
+}
+
+async function executeSendStep(run: LoadedRun, now: Date): Promise<RunResult> {
   const contact = run.contact;
 
   if (!contact || !contact.email) {
@@ -423,7 +577,7 @@ async function executeSendStep(run: LoadedRun, now: Date) {
         completedAt: now
       }
     });
-    return;
+    return { completed: false, rescheduled: false, cancelled: true };
   }
 
   if (contact.status !== ContactStatus.ACTIVE) {
@@ -435,10 +589,27 @@ async function executeSendStep(run: LoadedRun, now: Date) {
         completedAt: now
       }
     });
-    return;
+    return { completed: false, rescheduled: false, cancelled: true };
   }
 
-  const useOptimizer = run.flow.useOptimizer;
+  const modelConfig = readFlowModelConfig(run.flow.metadata, run.flow.useOptimizer);
+
+  if (modelConfig.useHygieneModel) {
+    const hygieneResult = await evaluateFlowHygiene(contact.id, now);
+    if (hygieneResult.shouldSuppress) {
+      await prisma.flowRun.update({
+        where: { id: run.id },
+        data: {
+          status: FlowRunStatus.CANCELLED,
+          cancelledReason: `Blocked by hygiene model (${hygieneResult.riskLevel} risk, score ${hygieneResult.score.toFixed(1)})`,
+          completedAt: now
+        }
+      });
+      return { completed: false, rescheduled: false, cancelled: true };
+    }
+  }
+
+  const useOptimizer = modelConfig.useSendTimeOptimizer;
   let recommendedAt: Date | null = null;
   if (useOptimizer) {
     try {
@@ -474,7 +645,7 @@ async function executeSendStep(run: LoadedRun, now: Date) {
       })
     ]);
 
-    return;
+    return { completed: true, rescheduled: false, cancelled: false };
   }
 
   try {
@@ -511,6 +682,7 @@ async function executeSendStep(run: LoadedRun, now: Date) {
         }
       })
     ]);
+    return { completed: true, rescheduled: false, cancelled: false };
   } catch (error) {
     if (error instanceof ResendError) {
       await prisma.flowRun.update({

@@ -319,4 +319,113 @@ describe("processDueFlowRuns", () => {
     assert.equal(updateCalls[0]?.data?.status, FlowRunStatus.CANCELLED);
     assert.equal(updateCalls[0]?.data?.cancelledReason, "Contact no longer in segment");
   });
+
+  it("cancels runs when hygiene model blocks the contact", async () => {
+    const now = new Date("2026-01-30T14:00:00Z");
+    const steps = [
+      buildStep(1, FlowStepType.TRIGGER, { eventName: "user.signup" }),
+      buildStep(2, FlowStepType.SEND_TEMPLATE, { templateId: "template-4" })
+    ];
+
+    const run = {
+      id: "run-hygiene-block",
+      flowId: "flow-4",
+      contactId: "contact-4",
+      status: FlowRunStatus.PENDING,
+      nextStepOrder: 2,
+      scheduledAt: now,
+      startedAt: null,
+      completedAt: null,
+      cancelledReason: null,
+      context: null,
+      createdAt: now,
+      updatedAt: now,
+      flow: {
+        id: "flow-4",
+        name: "Hygiene Guard Flow",
+        status: FlowStatus.ACTIVE,
+        triggerEventName: "user.signup",
+        delayMinutes: null,
+        useOptimizer: false,
+        segmentId: null,
+        templateId: "template-4",
+        metadata: {
+          ml: {
+            sendTimeOptimizer: false,
+            hygieneModel: true
+          }
+        },
+        createdAt: now,
+        updatedAt: now,
+        steps,
+        template: { id: "template-4", subject: "Hi", html: "<p>Hello</p>" },
+        segment: null
+      },
+      contact: {
+        id: "contact-4",
+        email: "demo+hygiene@resend.dev",
+        status: ContactStatus.ACTIVE,
+        tags: [],
+        timezone: null,
+        lastMessageSentAt: null
+      }
+    };
+
+    stubMethod(prisma.flowRun, "findMany", mock.fn(async () => [run]));
+
+    const flowRunUpdates: Array<Parameters<typeof prisma.flowRun.update>[0]> = [];
+    stubMethod(prisma.flowRun, "update", mock.fn(async (args: Parameters<typeof prisma.flowRun.update>[0]) => {
+      flowRunUpdates.push(args);
+      return run as unknown as Awaited<ReturnType<typeof prisma.flowRun.update>>;
+    }));
+
+    stubMethod(prisma.contact, "findUnique", mock.fn(async () => ({
+      id: "contact-4",
+      status: ContactStatus.BOUNCED,
+      tags: [],
+      lastEventAt: now,
+      lastMessageSentAt: now,
+      propensity: 0.2,
+      suppressions: [],
+      messages: []
+    })));
+
+    stubMethod(prisma.modelVersion, "findFirst", mock.fn(async () => null));
+    stubMethod(prisma.hygieneEvaluation, "create", mock.fn(async () => ({ id: "eval-1" })));
+
+    const contactUpdates: Array<Parameters<typeof prisma.contact.update>[0]> = [];
+    stubMethod(prisma.contact, "update", mock.fn(async (args: Parameters<typeof prisma.contact.update>[0]) => {
+      contactUpdates.push(args);
+      return { id: "contact-4" } as unknown as Awaited<ReturnType<typeof prisma.contact.update>>;
+    }));
+
+    const messageCreateMock = mock.fn(async () => ({ id: "message-unexpected" }));
+    stubMethod(prisma.message, "create", messageCreateMock);
+
+    const sendMock = mock.fn(async () => ({ id: "resend-not-used" }));
+    setSendEmailImplementation(sendMock);
+
+    const transactionMock = mock.fn(async (operations: Parameters<typeof prisma.$transaction>[0]) => {
+      if (Array.isArray(operations)) {
+        return Promise.all(operations as Promise<unknown>[]) as unknown as ReturnType<typeof prisma.$transaction>;
+      }
+      return [] as unknown as ReturnType<typeof prisma.$transaction>;
+    });
+    stubMethod(prisma, "$transaction", transactionMock);
+
+    const summary = await processDueFlowRuns({ now, limit: 5 });
+
+    assert.equal(summary.cancelled, 1);
+    assert.equal(summary.completed, 0);
+    assert.equal(summary.failed, 0);
+
+    assert.equal(sendMock.mock.callCount(), 0);
+    assert.equal(messageCreateMock.mock.callCount(), 0);
+    assert.equal(contactUpdates.length, 1);
+    assert.ok(flowRunUpdates.some((entry) =>
+      entry.data?.status === FlowRunStatus.CANCELLED &&
+      typeof entry.data?.cancelledReason === "string" &&
+      (entry.data.cancelledReason as string).includes("Blocked by hygiene model")
+    ));
+  });
 });

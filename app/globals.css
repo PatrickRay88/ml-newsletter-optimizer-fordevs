@@ -118,6 +118,11 @@ a {
   margin-bottom: 0.75rem;
 }
 
+.sidebar-account-menu-top {
+  margin-top: -0.5rem;
+  margin-bottom: 0.25rem;
+}
+
 .sidebar-account-menu .app-user-trigger {
   width: 100%;
   justify-content: space-between;

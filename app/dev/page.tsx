@@ -27,6 +27,30 @@ type ModelSummary = {
   metrics: unknown;
   metadata: unknown;
   predictionCount: number;
+  sampleCount?: number;
+  decisionCountSinceTraining?: number;
+  decisionCountTotal?: number;
+  expectedScorePct?: number | null;
+  expectedBaselinePct?: number | null;
+  expectedUpliftPct?: number | null;
+  pooledPerformance?: {
+    pooledBroadcasts: number;
+    sentMessages: number;
+    optimizedMessages: number;
+    optimizationCoveragePct: number;
+    deliveredOptimized: number;
+    clickedOptimized: number;
+    deliveredControl: number;
+    clickedControl: number;
+    actualCtrPct: number;
+    controlCtrPct: number;
+    baselineCtrPct: number | null;
+    baselineSamples: number;
+    upliftVsControlPct: number | null;
+    upliftVsBaselinePct: number | null;
+    status: "warming_up" | "insufficient_data" | "no_baseline" | "healthy" | "underperforming";
+    statusNote: string;
+  };
 };
 
 type ModelSummaryResponse = {
@@ -63,6 +87,29 @@ function maskEmail(email: string | null): string {
   }
   const maskedUser = user.length <= 3 ? `${user[0] ?? "*"}***` : `${user.slice(0, 3)}***`;
   return `${maskedUser}@${domain}`;
+}
+
+function formatPercent(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return "—";
+  }
+  return `${value.toFixed(2)}%`;
+}
+
+function statusLabel(value: ModelSummary["pooledPerformance"] extends { status: infer T } ? T : never): string {
+  if (value === "healthy") {
+    return "Healthy";
+  }
+  if (value === "underperforming") {
+    return "Underperforming";
+  }
+  if (value === "warming_up") {
+    return "Warming Up";
+  }
+  if (value === "no_baseline") {
+    return "No Baseline";
+  }
+  return "Insufficient Data";
 }
 
 export default function DevUtilitiesPage() {
@@ -287,7 +334,7 @@ export default function DevUtilitiesPage() {
             <div>
               <h2 style={{ margin: 0, fontSize: "1.05rem" }}>Model Training Summary</h2>
               <p style={{ margin: "0.35rem 0 0", color: "#64748b" }}>
-                Latest trained models and prediction counts.
+                Latest trained models and model-specific telemetry.
               </p>
             </div>
             <button
@@ -335,7 +382,42 @@ export default function DevUtilitiesPage() {
                     </span>
                   </div>
                   <div style={{ marginTop: "0.4rem", color: "#cbd5f5", fontSize: "0.9rem" }}>
-                    <div>Predictions: {model?.predictionCount ?? 0}</div>
+                    {entry.key === "sendTime" ? (
+                      <>
+                        <div>
+                          Status: {model?.pooledPerformance ? statusLabel(model.pooledPerformance.status) : "—"}
+                        </div>
+                        <div style={{ color: "#94a3b8" }}>
+                          {model?.pooledPerformance?.statusNote ?? "No optimizer telemetry yet"}
+                        </div>
+                        <div>Message samples: {model?.sampleCount ?? 0}</div>
+                        <div>Expected CTR (optimizer): {formatPercent(model?.expectedScorePct)}</div>
+                        <div>Expected CTR (baseline): {formatPercent(model?.expectedBaselinePct)}</div>
+                        <div>Expected uplift: {formatPercent(model?.expectedUpliftPct)}</div>
+                        <div>Pooled broadcasts: {model?.pooledPerformance?.pooledBroadcasts ?? 0}</div>
+                        <div>
+                          Coverage: {formatPercent(model?.pooledPerformance?.optimizationCoveragePct)} ({model?.pooledPerformance?.optimizedMessages ?? 0}/{model?.pooledPerformance?.sentMessages ?? 0} sent messages)
+                        </div>
+                        <div>
+                          Realized CTR (optimized): {formatPercent(model?.pooledPerformance?.actualCtrPct)} ({model?.pooledPerformance?.clickedOptimized ?? 0}/{model?.pooledPerformance?.deliveredOptimized ?? 0})
+                        </div>
+                        <div>
+                          Realized CTR (control): {formatPercent(model?.pooledPerformance?.controlCtrPct)} ({model?.pooledPerformance?.clickedControl ?? 0}/{model?.pooledPerformance?.deliveredControl ?? 0})
+                        </div>
+                        <div>Realized uplift vs control: {formatPercent(model?.pooledPerformance?.upliftVsControlPct)}</div>
+                        <div>
+                          Baseline CTR (synthetic): {formatPercent(model?.pooledPerformance?.baselineCtrPct)} ({model?.pooledPerformance?.baselineSamples ?? 0} samples)
+                        </div>
+                        <div>Realized uplift vs baseline: {formatPercent(model?.pooledPerformance?.upliftVsBaselinePct)}</div>
+                        <div>Optimizer decisions (since training): {model?.decisionCountSinceTraining ?? 0}</div>
+                        <div>Optimizer decisions (total): {model?.decisionCountTotal ?? 0}</div>
+                      </>
+                    ) : (
+                      <>
+                        <div>Predictions: {model?.predictionCount ?? 0}</div>
+                        <div>Contact samples: {model?.sampleCount ?? 0}</div>
+                      </>
+                    )}
                     <div>Model ID: {model?.id ?? "—"}</div>
                   </div>
                 </div>

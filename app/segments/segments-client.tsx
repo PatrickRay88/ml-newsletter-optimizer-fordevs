@@ -49,6 +49,7 @@ const INITIAL_STATE: BuilderState = {
 };
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const ALL_SEGMENTS_FILTER = "__ALL_SEGMENTS__";
 
 function describeHour(hour: number): string {
   const dayIndex = Math.floor(hour / 24) % 7;
@@ -58,9 +59,19 @@ function describeHour(hour: number): string {
 
 export default function SegmentsClient({ segments, statusOptions, distinct, heatmaps }: SegmentsClientProps) {
   const router = useRouter();
+  const systemSegment = useMemo(() => segments.find((segment) => segment.isSystem) ?? null, [segments]);
+  const [segmentFilter, setSegmentFilter] = useState<string>(systemSegment?.id ?? ALL_SEGMENTS_FILTER);
   const [builder, setBuilder] = useState<BuilderState>(INITIAL_STATE);
   const [status, setStatus] = useState<ActionStatus>({ type: "idle" });
   const [recomputeStatus, setRecomputeStatus] = useState<ActionStatus>({ type: "idle" });
+
+  const visibleSegments = useMemo(() => {
+    if (segmentFilter === ALL_SEGMENTS_FILTER) {
+      return segments;
+    }
+
+    return segments.filter((segment) => segment.id === segmentFilter);
+  }, [segmentFilter, segments]);
 
   const filtersPayload = useMemo(() => {
     const filters: Array<{ type: string; value: string | number }> = [];
@@ -252,9 +263,37 @@ export default function SegmentsClient({ segments, statusOptions, distinct, heat
       </section>
 
       <section style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-        <h2 style={{ margin: 0 }}>Existing segments</h2>
+        <div style={{ display: "flex", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
+          <h2 style={{ margin: 0 }}>Existing segments</h2>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#cbd5e1" }}>
+            <span>Activity filter</span>
+            <select
+              value={segmentFilter}
+              onChange={(event) => setSegmentFilter(event.target.value)}
+              style={{
+                padding: "0.5rem",
+                borderRadius: "0.5rem",
+                background: "#0f172a",
+                color: "#e2e8f0",
+                border: "1px solid #334155"
+              }}
+            >
+              {systemSegment && (
+                <option value={systemSegment.id}>All Contacts</option>
+              )}
+              <option value={ALL_SEGMENTS_FILTER}>All Segments</option>
+              {segments
+                .filter((segment) => !segment.isSystem)
+                .map((segment) => (
+                  <option key={segment.id} value={segment.id}>
+                    {segment.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
         <div style={{ display: "grid", gap: "1.5rem", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
-          {segments.map((segment) => (
+          {visibleSegments.map((segment) => (
             <article key={segment.id} style={CARD_STYLE}>
               <header>
                 <h3 style={{ margin: 0 }}>{segment.name}</h3>
@@ -287,6 +326,9 @@ export default function SegmentsClient({ segments, statusOptions, distinct, heat
               </button>
             </article>
           ))}
+          {visibleSegments.length === 0 && (
+            <p style={{ color: "#94a3b8", margin: 0 }}>No segments available for this filter.</p>
+          )}
         </div>
         {recomputeStatus.type !== "idle" && (
           <span

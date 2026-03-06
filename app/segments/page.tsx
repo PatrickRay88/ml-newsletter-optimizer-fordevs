@@ -1,18 +1,29 @@
 import { ContactStatus } from "@prisma/client";
 import { getSegmentHeatmap, listSegments, type SegmentHeatmap } from "@/lib/segments";
 import { listDistinctContactValues } from "@/lib/contacts";
+import { prisma } from "@/lib/prisma";
 import SegmentsClient from "./segments-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function SegmentsPage() {
-  const [segments, contactValues] = await Promise.all([
+  const [segments, contactValues, totalContacts] = await Promise.all([
     listSegments(),
-    listDistinctContactValues({ status: null, tag: null, timezone: null })
+    listDistinctContactValues({ status: null, tag: null, timezone: null }),
+    prisma.contact.count()
   ]);
 
+  const normalizedSegments = segments.map((segment) =>
+    segment.isSystem && segment.estimatedSize == null
+      ? {
+          ...segment,
+          estimatedSize: totalContacts
+        }
+      : segment
+  );
+
   const heatmaps = await Promise.all(
-    segments.map((segment) => getSegmentHeatmap(segment.id))
+    normalizedSegments.map((segment) => getSegmentHeatmap(segment.id))
   );
 
   const heatmapById = heatmaps.reduce<Record<string, SegmentHeatmap>>((acc, heatmap) => {
@@ -22,7 +33,7 @@ export default async function SegmentsPage() {
 
   return (
     <SegmentsClient
-      segments={segments}
+      segments={normalizedSegments}
       statusOptions={Object.values(ContactStatus)}
       distinct={contactValues}
       heatmaps={heatmapById}

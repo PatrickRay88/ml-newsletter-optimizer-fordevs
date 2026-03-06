@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { BroadcastSendStrategy } from "@/lib/broadcasts";
 import { formatBroadcastSummary, sendBroadcastById } from "@/lib/broadcasts";
 import { ResendError } from "@/lib/resend";
 
@@ -31,6 +32,36 @@ function resolveUseOptimizer(request: Request, body: unknown): boolean | undefin
   return undefined;
 }
 
+function normalizeSendStrategy(value: unknown): BroadcastSendStrategy | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "bulk") {
+    return "bulk";
+  }
+  if (normalized === "individual") {
+    return "individual";
+  }
+
+  return undefined;
+}
+
+function resolveSendStrategy(request: Request, body: unknown): BroadcastSendStrategy | undefined {
+  const url = new URL(request.url);
+  const strategyFromQuery = normalizeSendStrategy(url.searchParams.get("strategy"));
+  if (strategyFromQuery) {
+    return strategyFromQuery;
+  }
+
+  if (body && typeof body === "object" && "sendStrategy" in body) {
+    return normalizeSendStrategy((body as { sendStrategy?: unknown }).sendStrategy);
+  }
+
+  return undefined;
+}
+
 export async function POST(request: Request, { params }: RouteParams) {
   const broadcastId = params.id;
 
@@ -56,8 +87,10 @@ export async function POST(request: Request, { params }: RouteParams) {
     }
 
     const useOptimizer = resolveUseOptimizer(request, parsedBody);
+    const sendStrategy = resolveSendStrategy(request, parsedBody);
     const summary = await sendBroadcastById(broadcastId, {
-      useOptimizer
+      useOptimizer,
+      sendStrategy
     });
     const message = formatBroadcastSummary(summary);
     return NextResponse.json({

@@ -8,9 +8,18 @@ export type EmailSendInput = {
   tags?: Record<string, string>;
 };
 
+export type EmailBatchSendInput = {
+  messages: EmailSendInput[];
+};
+
 export type EmailSendResult = {
   provider: EmailEngineProvider;
   messageId: string;
+};
+
+export type EmailBatchSendResult = {
+  provider: EmailEngineProvider;
+  messageIds: string[];
 };
 
 export type EngineConnectionTestResult = {

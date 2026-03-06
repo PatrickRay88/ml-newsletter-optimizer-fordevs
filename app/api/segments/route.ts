@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { ContactStatus } from "@prisma/client";
-import { createSegment, buildSegmentDefinition, SegmentFilterDefinition } from "@/lib/segments";
+import {
+  createSegment,
+  buildSegmentDefinition,
+  recomputeSegmentMembership,
+  SegmentFilterDefinition
+} from "@/lib/segments";
 
 function parseFilters(input: unknown): SegmentFilterDefinition[] {
   if (!Array.isArray(input)) {
@@ -54,6 +59,8 @@ export async function POST(request: Request) {
       description: typeof body.description === "string" ? body.description : null,
       filters: parseFilters(body.filters)
     });
+
+    await recomputeSegmentMembership(segment.id);
 
     return NextResponse.json({
       success: true,

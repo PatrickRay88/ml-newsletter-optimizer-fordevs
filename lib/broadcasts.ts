@@ -2,15 +2,18 @@ import { BroadcastStatus, ContactStatus, MessageStatus, Prisma, WorkspaceMode } 
 import { prisma } from "./prisma";
 import { ResendError } from "./resend";
 import { resolveEmailEngineAdapter } from "./engines/adapter";
+import type { EmailEngineAdapter } from "./engines/adapter";
 import { recommendSendTime } from "./optimizer";
 
 const ALL_CONTACTS_SEGMENT_NAME = "All Contacts";
 const ALL_CONTACTS_SEGMENT_DEFINITION = { type: "all" } as const;
 const SCHEDULE_THRESHOLD_MS = 5 * 60 * 1000;
+const BULK_SEND_CHUNK_SIZE = 100;
 
 export const SEND_EXCLUDED_STATUSES = new Set<ContactStatus>([
   ContactStatus.SUPPRESSED,
-  ContactStatus.COMPLAINED
+  ContactStatus.COMPLAINED,
+  ContactStatus.BOUNCED
 ]);
 
 export type ContactSnapshot = {
@@ -45,10 +48,41 @@ export function buildTagRecord(tags: string[]): Record<string, string> | undefin
   }
 
   const entries: Record<string, string> = {};
-  tags.slice(0, 8).forEach((tag, index) => {
-    entries[`tag_${index + 1}`] = tag;
-  });
+  let index = 1;
+
+  for (const tag of tags) {
+    if (index > 8) {
+      break;
+    }
+
+    const sanitized = sanitizeOutgoingTag(tag);
+    if (!sanitized) {
+      continue;
+    }
+
+    entries[`tag_${index}`] = sanitized;
+    index += 1;
+  }
+
+  if (Object.keys(entries).length === 0) {
+    return undefined;
+  }
+
   return entries;
+}
+
+function sanitizeOutgoingTag(tag: string): string | null {
+  const ascii = tag.normalize("NFKD").replace(/[^\x00-\x7F]/g, "");
+  const normalized = ascii
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  if (!normalized) {
+    return null;
+  }
+
+  return normalized.slice(0, 64);
 }
 
 export async function ensureAllContactsSegmentId(): Promise<string> {
@@ -123,7 +157,10 @@ export async function createBroadcastDraft(input: BroadcastDraftInput) {
 
 export type BroadcastSendOptions = {
   useOptimizer?: boolean;
+  sendStrategy?: BroadcastSendStrategy;
 };
+
+export type BroadcastSendStrategy = "individual" | "bulk";
 
 export type OptimizerSendSummary = {
   evaluated: number;
@@ -139,6 +176,7 @@ export type BroadcastSendSummary = {
   totalRecipients: number;
   skippedRecipients: number;
   scheduledRecipients: number;
+  sendStrategy: BroadcastSendStrategy;
   alreadySent: boolean;
   durationMs: number;
   messageIds: string[];
@@ -156,13 +194,135 @@ function createEmptyOptimizerSummary(): OptimizerSendSummary {
   };
 }
 
+type ImmediateRecipient = {
+  contact: ContactSnapshot;
+  recommendedAt: Date | null;
+};
+
+function chunk<T>(items: T[], size: number): T[][] {
+  if (size <= 0) {
+    return [items];
+  }
+
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    chunks.push(items.slice(i, i + size));
+  }
+  return chunks;
+}
+
+function createFallbackMessageId(contactId: string, chunkIndex: number, itemIndex: number): string {
+  return `bulk-${Date.now()}-${chunkIndex}-${itemIndex}-${contactId}`;
+}
+
+async function sendImmediateRecipientsIndividually(params: {
+  emailEngine: EmailEngineAdapter;
+  recipients: ImmediateRecipient[];
+  subject: string;
+  html: string;
+  broadcastId: string;
+  templateId: string;
+}): Promise<{ messageRows: Prisma.MessageCreateManyInput[]; messageIds: string[] }> {
+  const messageRows: Prisma.MessageCreateManyInput[] = [];
+  const messageIds: string[] = [];
+
+  for (const recipient of params.recipients) {
+    const sendResult = await params.emailEngine.sendEmail({
+      to: recipient.contact.email as string,
+      subject: params.subject,
+      html: params.html,
+      tags: buildTagRecord(recipient.contact.tags)
+    });
+
+    const sentAt = new Date();
+    messageIds.push(sendResult.messageId);
+    messageRows.push({
+      broadcastId: params.broadcastId,
+      contactId: recipient.contact.id,
+      templateId: params.templateId,
+      resendMessageId: sendResult.messageId,
+      status: MessageStatus.SENT,
+      scheduledSendAt: recipient.recommendedAt ?? undefined,
+      sentAt,
+      lastStatusCheckAt: null
+    });
+  }
+
+  return { messageRows, messageIds };
+}
+
+async function sendImmediateRecipientsBulk(params: {
+  emailEngine: EmailEngineAdapter;
+  recipients: ImmediateRecipient[];
+  subject: string;
+  html: string;
+  broadcastId: string;
+  templateId: string;
+}): Promise<{ messageRows: Prisma.MessageCreateManyInput[]; messageIds: string[] }> {
+  if (!params.emailEngine.sendEmailBatch) {
+    return sendImmediateRecipientsIndividually(params);
+  }
+
+  const messageRows: Prisma.MessageCreateManyInput[] = [];
+  const messageIds: string[] = [];
+  const recipientChunks = chunk(params.recipients, BULK_SEND_CHUNK_SIZE);
+
+  for (let chunkIndex = 0; chunkIndex < recipientChunks.length; chunkIndex += 1) {
+    const recipientChunk = recipientChunks[chunkIndex];
+
+    try {
+      const batchResult = await params.emailEngine.sendEmailBatch({
+        messages: recipientChunk.map((recipient) => ({
+          to: recipient.contact.email as string,
+          subject: params.subject,
+          html: params.html,
+          tags: buildTagRecord(recipient.contact.tags)
+        }))
+      });
+
+      recipientChunk.forEach((recipient, itemIndex) => {
+        const messageId = batchResult.messageIds[itemIndex] ?? createFallbackMessageId(recipient.contact.id, chunkIndex, itemIndex);
+        const sentAt = new Date();
+        messageIds.push(messageId);
+        messageRows.push({
+          broadcastId: params.broadcastId,
+          contactId: recipient.contact.id,
+          templateId: params.templateId,
+          resendMessageId: messageId,
+          status: MessageStatus.SENT,
+          scheduledSendAt: recipient.recommendedAt ?? undefined,
+          sentAt,
+          lastStatusCheckAt: null
+        });
+      });
+    } catch {
+      // If provider bulk send fails, degrade gracefully to individual sends for this chunk.
+      const fallback = await sendImmediateRecipientsIndividually({
+        ...params,
+        recipients: recipientChunk
+      });
+      messageRows.push(...fallback.messageRows);
+      messageIds.push(...fallback.messageIds);
+    }
+  }
+
+  return { messageRows, messageIds };
+}
+
 export async function sendBroadcastById(broadcastId: string, options?: BroadcastSendOptions): Promise<BroadcastSendSummary> {
   const emailEngine = resolveEmailEngineAdapter();
+  const sendStrategy: BroadcastSendStrategy = options?.sendStrategy ?? "individual";
 
   const broadcast = await prisma.broadcast.findUnique({
     where: { id: broadcastId },
     include: {
-      template: true
+      template: true,
+      segment: {
+        select: {
+          id: true,
+          isSystem: true
+        }
+      }
     }
   });
 
@@ -181,6 +341,7 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
       totalRecipients: existingCount,
       skippedRecipients: 0,
       scheduledRecipients: 0,
+      sendStrategy,
       alreadySent: true,
       durationMs: 0,
       messageIds: [],
@@ -190,15 +351,12 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
 
   const existingMessages = await prisma.message.count({ where: { broadcastId } });
   if (existingMessages > 0) {
-    await prisma.broadcast.update({
-      where: { id: broadcastId },
-      data: { status: BroadcastStatus.SENT, totalRecipients: existingMessages }
-    });
     return {
       broadcastId,
       totalRecipients: existingMessages,
       skippedRecipients: 0,
       scheduledRecipients: 0,
+      sendStrategy,
       alreadySent: true,
       durationMs: 0,
       messageIds: [],
@@ -207,6 +365,16 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
   }
 
   const contactSnapshots = await prisma.contact.findMany({
+    where:
+      broadcast.segmentId && !broadcast.segment?.isSystem
+        ? {
+            segmentMemberships: {
+              some: {
+                segmentId: broadcast.segmentId
+              }
+            }
+          }
+        : undefined,
     select: {
       id: true,
       email: true,
@@ -232,6 +400,7 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
       totalRecipients: 0,
       skippedRecipients: skipped.length,
       scheduledRecipients: 0,
+      sendStrategy,
       alreadySent: false,
       durationMs: 0,
       messageIds: [],
@@ -246,7 +415,8 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
   });
 
   const messageRows: Prisma.MessageCreateManyInput[] = [];
-  const messageIds: string[] = [];
+  let messageIds: string[] = [];
+  const immediateRecipients: ImmediateRecipient[] = [];
   let scheduledCount = 0;
   let optimizerSkipped = 0;
   const optimizerSummary = createEmptyOptimizerSummary();
@@ -297,27 +467,33 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
         continue;
       }
 
-      const sendResult = await emailEngine.sendEmail({
-        to: contact.email as string,
-        subject: broadcast.template.subject,
-        html: broadcast.template.html,
-        tags: buildTagRecord(contact.tags)
-      });
-
-      const sentAt = new Date();
-      messageIds.push(sendResult.messageId);
-      optimizerSummary.sentImmediately += 1;
-      messageRows.push({
-        broadcastId,
-        contactId: contact.id,
-        templateId: broadcast.templateId,
-        resendMessageId: sendResult.messageId,
-        status: MessageStatus.SENT,
-        scheduledSendAt: recommendedAt ?? undefined,
-        sentAt,
-        lastStatusCheckAt: null
+      immediateRecipients.push({
+        contact,
+        recommendedAt
       });
     }
+
+    const immediateSendResult = sendStrategy === "bulk"
+      ? await sendImmediateRecipientsBulk({
+          emailEngine,
+          recipients: immediateRecipients,
+          subject: broadcast.template.subject,
+          html: broadcast.template.html,
+          broadcastId,
+          templateId: broadcast.templateId
+        })
+      : await sendImmediateRecipientsIndividually({
+          emailEngine,
+          recipients: immediateRecipients,
+          subject: broadcast.template.subject,
+          html: broadcast.template.html,
+          broadcastId,
+          templateId: broadcast.templateId
+        });
+
+    messageRows.push(...immediateSendResult.messageRows);
+    messageIds = immediateSendResult.messageIds;
+    optimizerSummary.sentImmediately = immediateSendResult.messageRows.length;
   } catch (error) {
     await prisma.broadcast.update({
       where: { id: broadcastId },
@@ -343,6 +519,7 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
       totalRecipients: 0,
       skippedRecipients: skipped.length + optimizerSkipped,
       scheduledRecipients: 0,
+      sendStrategy,
       alreadySent: false,
       durationMs: duration,
       messageIds,
@@ -384,6 +561,7 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
     totalRecipients: messageRows.length,
     skippedRecipients: skipped.length + optimizerSkipped,
     scheduledRecipients: scheduledCount,
+    sendStrategy,
     alreadySent: false,
     durationMs,
     messageIds,
@@ -419,5 +597,171 @@ export function formatBroadcastSummary(summary: BroadcastSendSummary): string {
     return "Broadcast processed with no eligible recipients";
   }
 
+  if (summary.sendStrategy === "bulk") {
+    parts.push("bulk mode");
+  }
+
   return `Broadcast processed: ${parts.join(", ")}`;
+}
+
+export type ScheduledDispatchSummary = {
+  checked: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  updatedBroadcasts: number;
+};
+
+const EMPTY_SCHEDULED_DISPATCH_SUMMARY: ScheduledDispatchSummary = {
+  checked: 0,
+  sent: 0,
+  failed: 0,
+  skipped: 0,
+  updatedBroadcasts: 0
+};
+
+export async function dispatchDueScheduledMessages(limit = 200): Promise<ScheduledDispatchSummary> {
+  const now = new Date();
+  const emailEngine = resolveEmailEngineAdapter();
+
+  const dueMessages = await prisma.message.findMany({
+    where: {
+      status: MessageStatus.SCHEDULED,
+      scheduledSendAt: {
+        lte: now
+      },
+      resendMessageId: null
+    },
+    include: {
+      contact: {
+        select: {
+          id: true,
+          email: true,
+          status: true,
+          tags: true
+        }
+      },
+      template: {
+        select: {
+          subject: true,
+          html: true
+        }
+      }
+    },
+    orderBy: {
+      scheduledSendAt: "asc"
+    },
+    take: limit
+  });
+
+  if (dueMessages.length === 0) {
+    return EMPTY_SCHEDULED_DISPATCH_SUMMARY;
+  }
+
+  const summary: ScheduledDispatchSummary = {
+    checked: 0,
+    sent: 0,
+    failed: 0,
+    skipped: 0,
+    updatedBroadcasts: 0
+  };
+
+  const touchedBroadcastIds = new Set<string>();
+
+  for (const message of dueMessages) {
+    summary.checked += 1;
+
+    if (message.broadcastId) {
+      touchedBroadcastIds.add(message.broadcastId);
+    }
+
+    if (!message.contact.email || SEND_EXCLUDED_STATUSES.has(message.contact.status)) {
+      summary.skipped += 1;
+      await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          status: MessageStatus.FAILED,
+          lastStatusCheckAt: now
+        }
+      });
+      continue;
+    }
+
+    if (!message.template) {
+      summary.failed += 1;
+      await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          status: MessageStatus.FAILED,
+          lastStatusCheckAt: now
+        }
+      });
+      continue;
+    }
+
+    try {
+      const sendResult = await emailEngine.sendEmail({
+        to: message.contact.email,
+        subject: message.template.subject,
+        html: message.template.html,
+        tags: buildTagRecord(message.contact.tags)
+      });
+
+      const sentAt = new Date();
+      await prisma.$transaction([
+        prisma.message.update({
+          where: { id: message.id },
+          data: {
+            status: MessageStatus.SENT,
+            sentAt,
+            resendMessageId: sendResult.messageId,
+            lastStatusCheckAt: null
+          }
+        }),
+        prisma.contact.update({
+          where: { id: message.contact.id },
+          data: {
+            lastMessageSentAt: sentAt
+          }
+        })
+      ]);
+
+      summary.sent += 1;
+    } catch (error) {
+      summary.failed += 1;
+      await prisma.message.update({
+        where: { id: message.id },
+        data: {
+          status: MessageStatus.FAILED,
+          lastStatusCheckAt: now
+        }
+      });
+    }
+  }
+
+  for (const broadcastId of touchedBroadcastIds) {
+    const [scheduledCount, sentCount, failedCount, totalCount] = await Promise.all([
+      prisma.message.count({ where: { broadcastId, status: MessageStatus.SCHEDULED } }),
+      prisma.message.count({ where: { broadcastId, status: MessageStatus.SENT } }),
+      prisma.message.count({ where: { broadcastId, status: MessageStatus.FAILED } }),
+      prisma.message.count({ where: { broadcastId } })
+    ]);
+
+    const nextStatus = scheduledCount === 0
+      ? BroadcastStatus.SENT
+      : sentCount > 0 || failedCount > 0
+        ? BroadcastStatus.SENDING
+        : BroadcastStatus.SCHEDULED;
+
+    await prisma.broadcast.update({
+      where: { id: broadcastId },
+      data: {
+        status: nextStatus,
+        totalRecipients: totalCount
+      }
+    });
+  }
+
+  summary.updatedBroadcasts = touchedBroadcastIds.size;
+  return summary;
 }

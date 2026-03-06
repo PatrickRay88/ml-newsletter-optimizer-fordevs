@@ -46,10 +46,12 @@ export async function POST(request: Request) {
     const delayMinutes = parseNumber((body as { delayMinutes?: unknown }).delayMinutes);
     const segmentIdRaw = (body as { segmentId?: unknown }).segmentId;
     const useOptimizerRaw = (body as { useOptimizer?: unknown }).useOptimizer;
+    const useHygieneModelRaw = (body as { useHygieneModel?: unknown }).useHygieneModel;
     const statusRaw = (body as { status?: unknown }).status;
 
     const segmentId = typeof segmentIdRaw === "string" && segmentIdRaw.length > 0 ? segmentIdRaw : undefined;
     const useOptimizer = typeof useOptimizerRaw === "boolean" ? useOptimizerRaw : undefined;
+    const useHygieneModel = typeof useHygieneModelRaw === "boolean" ? useHygieneModelRaw : undefined;
 
     let status: FlowStatus | undefined;
     if (typeof statusRaw === "string" && statusRaw in FlowStatus) {
@@ -62,7 +64,8 @@ export async function POST(request: Request) {
       templateId: templateId.trim(),
       delayMinutes: delayMinutes ?? null,
       segmentId,
-      useOptimizer
+      useOptimizer,
+      useHygieneModel
     });
 
     if (status && status !== FlowStatus.DRAFT) {

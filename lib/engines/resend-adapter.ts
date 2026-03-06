@@ -1,5 +1,6 @@
 import {
   retrieveResendEmailStatus,
+  sendResendEmailBatch,
   sendResendEmail,
   testResendConnection
 } from "../resend";
@@ -12,6 +13,13 @@ export const resendEngineAdapter: EmailEngineAdapter = {
     return {
       provider: "resend",
       messageId: result.id
+    };
+  },
+  async sendEmailBatch(input) {
+    const result = await sendResendEmailBatch({ messages: input.messages });
+    return {
+      provider: "resend",
+      messageIds: result.ids
     };
   },
   async testConnection() {

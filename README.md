@@ -28,6 +28,7 @@ Optional:
 5. Seed data: `npm run db:seed`
 6. Generate synthetic data: `npm run data:generate`
 7. Start dev server: `npm run dev`
+8. Optional local scheduler for queued sends: `npm run dev:scheduler`
 
 ## Day‑one demo flow
 1. Settings -> connect Resend key (Sandbox).
@@ -36,6 +37,12 @@ Optional:
 4. Dev utilities → Train ML Models.
 5. Dev utilities → Poll Email Status + Run Hygiene Sweep.
 6. Dashboard → review delivery + CTR uplift.
+
+## Scheduled sends and automation
+- Optimizer-window sends are queued with per-message `scheduledSendAt`.
+- Queued sends are dispatched by calling `POST /api/jobs/poll-email-status`.
+- In local dev, run `npm run dev:scheduler` to auto-trigger dispatch every 2 minutes.
+- In hosted environments, configure a cron/job runner to call that route every 2-5 minutes.
 
 ## ML + data pipeline
 - **Training**: `/api/jobs/train-models` persists ModelVersion metrics + predictions.

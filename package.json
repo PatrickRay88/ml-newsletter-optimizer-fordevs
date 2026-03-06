@@ -12,7 +12,8 @@
     "prisma:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
     "test": "tsx --test tests/index.test.ts",
-    "data:generate": "tsx scripts/generate_synthetic_data.ts"
+    "data:generate": "tsx scripts/generate_synthetic_data.ts",
+    "dev:scheduler": "tsx scripts/dispatch_scheduler.ts"
   },
   "dependencies": {
     "@prisma/client": "5.9.1",

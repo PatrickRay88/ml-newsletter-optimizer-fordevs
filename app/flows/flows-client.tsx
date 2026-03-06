@@ -46,6 +46,11 @@ type FlowTemplatePreset = {
   templateHint: string;
 };
 
+type FlowMlConfig = {
+  useSendTimeOptimizer: boolean;
+  useHygieneModel: boolean;
+};
+
 const FLOW_TEMPLATES: FlowTemplatePreset[] = [
   {
     key: "onboarding",
@@ -139,6 +144,36 @@ function runStatusColor(status: FlowRunStatus): string {
   }
 }
 
+function getFlowMlConfig(flow: FlowOverview): FlowMlConfig {
+  const config: FlowMlConfig = {
+    useSendTimeOptimizer: flow.useOptimizer,
+    useHygieneModel: false
+  };
+
+  const metadata = flow.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return config;
+  }
+
+  const root = metadata as Record<string, unknown>;
+  const ml = root.ml;
+  if (ml && typeof ml === "object" && !Array.isArray(ml)) {
+    const mlRecord = ml as Record<string, unknown>;
+    if (typeof mlRecord.sendTimeOptimizer === "boolean") {
+      config.useSendTimeOptimizer = mlRecord.sendTimeOptimizer;
+    }
+    if (typeof mlRecord.hygieneModel === "boolean") {
+      config.useHygieneModel = mlRecord.hygieneModel;
+    }
+  }
+
+  if (typeof root.useHygieneModel === "boolean") {
+    config.useHygieneModel = root.useHygieneModel;
+  }
+
+  return config;
+}
+
 export default function FlowsClient({ flows, templates, segments }: FlowsClientProps) {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -147,6 +182,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
   const [delayMinutes, setDelayMinutes] = useState("60");
   const [segmentId, setSegmentId] = useState("");
   const [useOptimizer, setUseOptimizer] = useState(true);
+  const [useHygieneModel, setUseHygieneModel] = useState(true);
   const [status, setStatus] = useState<FlowStatus>("ACTIVE");
   const [createStatus, setCreateStatus] = useState<CreateStatus>({ type: "idle" });
   const [updating, setUpdating] = useState<Record<string, boolean>>({});
@@ -163,6 +199,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
     }
     setSegmentId("");
     setUseOptimizer(true);
+    setUseHygieneModel(true);
     setStatus("ACTIVE");
   }, [templates]);
 
@@ -190,6 +227,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
       }
 
       payload.useOptimizer = useOptimizer;
+      payload.useHygieneModel = useHygieneModel;
       payload.status = status;
 
       const response = await fetch("/api/flows", {
@@ -211,6 +249,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
       setDelayMinutes("60");
       setSegmentId("");
       setUseOptimizer(true);
+      setUseHygieneModel(true);
       setStatus("ACTIVE");
       setTemplateId(templates[0]?.id ?? "");
       router.refresh();
@@ -220,7 +259,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
         message: error instanceof Error ? error.message : "Failed to create flow"
       });
     }
-  }, [delayMinutes, eventName, name, router, segmentId, status, templateId, templates, useOptimizer]);
+  }, [delayMinutes, eventName, name, router, segmentId, status, templateId, templates, useHygieneModel, useOptimizer]);
 
   const handleStatusChange = useCallback(async (flowId: string, next: FlowStatus) => {
     setUpdating((current) => ({ ...current, [flowId]: true }));
@@ -247,9 +286,10 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
   }, [router]);
 
   const flowCards = useMemo(() => flows.map((flow) => {
+    const mlConfig = getFlowMlConfig(flow);
     const stepItems = flow.steps.map((step) => describeStep(step, flow));
     const pendingRuns = flow.runs.filter((run) => run.status !== "COMPLETED" && run.status !== "CANCELLED" && run.status !== "FAILED");
-    return { flow, stepItems, pendingRuns };
+    return { flow, mlConfig, stepItems, pendingRuns };
   }), [flows]);
 
   return (
@@ -303,7 +343,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
         <header>
           <h2 style={{ margin: 0, fontSize: "1.35rem" }}>Create Flow</h2>
           <p style={{ margin: "0.4rem 0 0", color: "#94a3b8" }}>
-            Define event-triggered automations with optional delays, segment filters, and optimizer-aware sends.
+            Define event-triggered automations with optional delays, segment filters, and configurable ML model guardrails.
           </p>
         </header>
         <div style={{ display: "grid", gap: "0.75rem" }}>
@@ -388,17 +428,22 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
               />
               Use send-time optimizer
             </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.75rem" }}>
+              <input
+                type="checkbox"
+                checked={useHygieneModel}
+                onChange={(event) => setUseHygieneModel(event.target.checked)}
+              />
+              Use hygiene risk model guard
+            </label>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", color: "#94a3b8" }}>
               <span>ML modules</span>
               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: "rgba(56, 189, 248, 0.2)", color: "#38bdf8", fontSize: "0.8rem" }}>
+                <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: useOptimizer ? "rgba(56, 189, 248, 0.2)" : "rgba(148, 163, 184, 0.2)", color: useOptimizer ? "#38bdf8" : "#94a3b8", fontSize: "0.8rem" }}>
                   Send-time optimizer
                 </span>
-                <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: "rgba(148, 163, 184, 0.2)", color: "#94a3b8", fontSize: "0.8rem" }}>
-                  Hygiene scoring (soon)
-                </span>
-                <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: "rgba(148, 163, 184, 0.2)", color: "#94a3b8", fontSize: "0.8rem" }}>
-                  Experiments (soon)
+                <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: useHygieneModel ? "rgba(16, 185, 129, 0.2)" : "rgba(148, 163, 184, 0.2)", color: useHygieneModel ? "#34d399" : "#94a3b8", fontSize: "0.8rem" }}>
+                  Hygiene risk model
                 </span>
               </div>
             </div>
@@ -431,7 +476,7 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
         {flowCards.length === 0 ? (
           <p style={{ color: "#94a3b8" }}>No flows defined yet. Create one to start automation.</p>
         ) : (
-          flowCards.map(({ flow, stepItems, pendingRuns }) => (
+          flowCards.map(({ flow, mlConfig, stepItems, pendingRuns }) => (
             <article key={flow.id} style={CARD_STYLE}>
               <header style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
@@ -451,17 +496,14 @@ export default function FlowsClient({ flows, templates, segments }: FlowsClientP
                   <span style={{ color: "#64748b" }}>Trigger: {flow.triggerEventName}</span>
                 </div>
                 <p style={{ margin: 0, color: "#94a3b8" }}>
-                  Optimizer {flow.useOptimizer ? "enabled" : "disabled"} • {flow.delayMinutes ? `${flow.delayMinutes} minute delay` : "no delay"}
+                  Models: send-time {mlConfig.useSendTimeOptimizer ? "enabled" : "disabled"} • hygiene {mlConfig.useHygieneModel ? "enabled" : "disabled"} • {flow.delayMinutes ? `${flow.delayMinutes} minute delay` : "no delay"}
                 </p>
                 <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                  <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: flow.useOptimizer ? "rgba(56, 189, 248, 0.2)" : "rgba(148, 163, 184, 0.2)", color: flow.useOptimizer ? "#38bdf8" : "#94a3b8", fontSize: "0.8rem" }}>
+                  <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: mlConfig.useSendTimeOptimizer ? "rgba(56, 189, 248, 0.2)" : "rgba(148, 163, 184, 0.2)", color: mlConfig.useSendTimeOptimizer ? "#38bdf8" : "#94a3b8", fontSize: "0.8rem" }}>
                     Send-time optimizer
                   </span>
-                  <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: "rgba(148, 163, 184, 0.2)", color: "#94a3b8", fontSize: "0.8rem" }}>
-                    Hygiene scoring (soon)
-                  </span>
-                  <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: "rgba(148, 163, 184, 0.2)", color: "#94a3b8", fontSize: "0.8rem" }}>
-                    Experiments (soon)
+                  <span style={{ padding: "0.15rem 0.6rem", borderRadius: "999px", background: mlConfig.useHygieneModel ? "rgba(16, 185, 129, 0.2)" : "rgba(148, 163, 184, 0.2)", color: mlConfig.useHygieneModel ? "#34d399" : "#94a3b8", fontSize: "0.8rem" }}>
+                    Hygiene risk model
                   </span>
                 </div>
                 <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
