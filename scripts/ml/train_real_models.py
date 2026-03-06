@@ -33,24 +33,29 @@ def _safe_probability_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[st
     metrics: Dict[str, Any] = {}
     y_pred = (y_prob >= 0.5).astype(int)
 
-    metrics["accuracy"] = float(accuracy_score(y_true, y_pred))
+    accuracy = float(accuracy_score(y_true, y_pred))
+    metrics["accuracy"] = accuracy if math.isfinite(accuracy) else None
     try:
-        metrics["auc"] = float(roc_auc_score(y_true, y_prob))
+        auc = float(roc_auc_score(y_true, y_prob))
+        metrics["auc"] = auc if math.isfinite(auc) else None
     except ValueError:
         metrics["auc"] = None
 
     try:
-        metrics["pr_auc"] = float(average_precision_score(y_true, y_prob))
+        pr_auc = float(average_precision_score(y_true, y_prob))
+        metrics["pr_auc"] = pr_auc if math.isfinite(pr_auc) else None
     except ValueError:
         metrics["pr_auc"] = None
 
     try:
-        metrics["log_loss"] = float(log_loss(y_true, y_prob, labels=[0, 1]))
+        ll = float(log_loss(y_true, y_prob, labels=[0, 1]))
+        metrics["log_loss"] = ll if math.isfinite(ll) else None
     except ValueError:
         metrics["log_loss"] = None
 
     try:
-        metrics["brier_score"] = float(brier_score_loss(y_true, y_prob))
+        brier = float(brier_score_loss(y_true, y_prob))
+        metrics["brier_score"] = brier if math.isfinite(brier) else None
     except ValueError:
         metrics["brier_score"] = None
 
