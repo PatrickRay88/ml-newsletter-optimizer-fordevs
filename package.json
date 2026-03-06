@@ -13,7 +13,8 @@
     "db:seed": "prisma db seed",
     "test": "tsx --test tests/index.test.ts",
     "data:generate": "tsx scripts/generate_synthetic_data.ts",
-    "dev:scheduler": "tsx scripts/dispatch_scheduler.ts"
+    "dev:scheduler": "tsx scripts/dispatch_scheduler.ts",
+    "ml:train-real": "tsx scripts/train_real_models.ts"
   },
   "dependencies": {
     "@prisma/client": "5.9.1",

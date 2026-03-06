@@ -23,11 +23,23 @@ type Decision = {
 
 type ModelSummary = {
   id: string;
+  modelName?: string;
   trainedAt: string | null;
   metrics: unknown;
   metadata: unknown;
   predictionCount: number;
   sampleCount?: number;
+  classificationThreshold?: number | null;
+  trend?: Array<{
+    modelName: string;
+    trainedAt: string;
+    sampleCount: number;
+    auc: number | null;
+    prAuc: number | null;
+    logLoss: number | null;
+    brierScore: number | null;
+    threshold: number | null;
+  }>;
   decisionCountSinceTraining?: number;
   decisionCountTotal?: number;
   expectedScorePct?: number | null;
@@ -37,7 +49,11 @@ type ModelSummary = {
     pooledBroadcasts: number;
     sentMessages: number;
     optimizedMessages: number;
+    controlMessages?: number;
+    treatedMessages?: number;
+    assignedMessages?: number;
     optimizationCoveragePct: number;
+    assignmentCoveragePct?: number;
     deliveredOptimized: number;
     clickedOptimized: number;
     deliveredControl: number;
@@ -188,7 +204,7 @@ export default function DevUtilitiesPage() {
         if (key.includes("broadcast")) {
           void fetchDecisions();
         }
-        if (key.includes("train-models")) {
+        if (key.includes("train-models") || key.includes("train-real-models")) {
           void fetchModelSummary();
         }
       } catch (error) {
@@ -245,6 +261,12 @@ export default function DevUtilitiesPage() {
         description: "Recompute send-time histograms and hygiene risk model.",
         onClick: () => runPost("train-models", "/api/jobs/train-models"),
         walkthroughKey: "dev-train-models"
+      },
+      {
+        key: "train-real-models",
+        label: "Train Real ML Models",
+        description: "Train sklearn models from pooled outcomes and persist artifacts + model versions.",
+        onClick: () => runPost("train-real-models", "/api/jobs/train-real-models")
       },
       {
         key: "process-flows",
@@ -384,6 +406,7 @@ export default function DevUtilitiesPage() {
                   <div style={{ marginTop: "0.4rem", color: "#cbd5f5", fontSize: "0.9rem" }}>
                     {entry.key === "sendTime" ? (
                       <>
+                        <div>Model family: {model?.modelName ?? "—"}</div>
                         <div>
                           Status: {model?.pooledPerformance ? statusLabel(model.pooledPerformance.status) : "—"}
                         </div>
@@ -391,31 +414,57 @@ export default function DevUtilitiesPage() {
                           {model?.pooledPerformance?.statusNote ?? "No optimizer telemetry yet"}
                         </div>
                         <div>Message samples: {model?.sampleCount ?? 0}</div>
+                        <div>Classification threshold: {formatPercent(model?.classificationThreshold !== null && model?.classificationThreshold !== undefined ? model.classificationThreshold * 100 : null)}</div>
                         <div>Expected CTR (optimizer): {formatPercent(model?.expectedScorePct)}</div>
                         <div>Expected CTR (baseline): {formatPercent(model?.expectedBaselinePct)}</div>
                         <div>Expected uplift: {formatPercent(model?.expectedUpliftPct)}</div>
                         <div>Pooled broadcasts: {model?.pooledPerformance?.pooledBroadcasts ?? 0}</div>
                         <div>
-                          Coverage: {formatPercent(model?.pooledPerformance?.optimizationCoveragePct)} ({model?.pooledPerformance?.optimizedMessages ?? 0}/{model?.pooledPerformance?.sentMessages ?? 0} sent messages)
+                          Cohorts: optimized {model?.pooledPerformance?.optimizedMessages ?? 0}, control {model?.pooledPerformance?.controlMessages ?? 0}, treated {model?.pooledPerformance?.treatedMessages ?? 0}
                         </div>
                         <div>
-                          Realized CTR (optimized): {formatPercent(model?.pooledPerformance?.actualCtrPct)} ({model?.pooledPerformance?.clickedOptimized ?? 0}/{model?.pooledPerformance?.deliveredOptimized ?? 0})
+                          Assignment coverage: {formatPercent(model?.pooledPerformance?.assignmentCoveragePct ?? model?.pooledPerformance?.optimizationCoveragePct)} ({model?.pooledPerformance?.assignedMessages ?? 0}/{model?.pooledPerformance?.sentMessages ?? 0} sent messages)
                         </div>
                         <div>
-                          Realized CTR (control): {formatPercent(model?.pooledPerformance?.controlCtrPct)} ({model?.pooledPerformance?.clickedControl ?? 0}/{model?.pooledPerformance?.deliveredControl ?? 0})
+                          Realized CTR (optimized cohort): {formatPercent(model?.pooledPerformance?.actualCtrPct)} ({model?.pooledPerformance?.clickedOptimized ?? 0}/{model?.pooledPerformance?.deliveredOptimized ?? 0})
                         </div>
-                        <div>Realized uplift vs control: {formatPercent(model?.pooledPerformance?.upliftVsControlPct)}</div>
+                        <div>
+                          Realized CTR (control cohort): {formatPercent(model?.pooledPerformance?.controlCtrPct)} ({model?.pooledPerformance?.clickedControl ?? 0}/{model?.pooledPerformance?.deliveredControl ?? 0})
+                        </div>
+                        <div>Realized uplift (optimized vs control cohorts): {formatPercent(model?.pooledPerformance?.upliftVsControlPct)}</div>
                         <div>
                           Baseline CTR (synthetic): {formatPercent(model?.pooledPerformance?.baselineCtrPct)} ({model?.pooledPerformance?.baselineSamples ?? 0} samples)
                         </div>
                         <div>Realized uplift vs baseline: {formatPercent(model?.pooledPerformance?.upliftVsBaselinePct)}</div>
                         <div>Optimizer decisions (since training): {model?.decisionCountSinceTraining ?? 0}</div>
                         <div>Optimizer decisions (total): {model?.decisionCountTotal ?? 0}</div>
+                        {(model?.trend?.length ?? 0) > 0 && (
+                          <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.2rem", color: "#94a3b8" }}>
+                            <strong style={{ color: "#cbd5f5" }}>Recent performance trend</strong>
+                            {model?.trend?.slice(0, 5).map((point) => (
+                              <div key={`${point.modelName}-${point.trainedAt}`}>
+                                {formatTimestamp(point.trainedAt)} • AUC {formatPercent(point.auc !== null ? point.auc * 100 : null)} • PR-AUC {formatPercent(point.prAuc !== null ? point.prAuc * 100 : null)} • LogLoss {point.logLoss !== null && Number.isFinite(point.logLoss) ? point.logLoss.toFixed(4) : "—"}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <>
+                        <div>Model family: {model?.modelName ?? "—"}</div>
                         <div>Predictions: {model?.predictionCount ?? 0}</div>
                         <div>Contact samples: {model?.sampleCount ?? 0}</div>
+                        <div>Classification threshold: {formatPercent(model?.classificationThreshold !== null && model?.classificationThreshold !== undefined ? model.classificationThreshold * 100 : null)}</div>
+                        {(model?.trend?.length ?? 0) > 0 && (
+                          <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.2rem", color: "#94a3b8" }}>
+                            <strong style={{ color: "#cbd5f5" }}>Recent performance trend</strong>
+                            {model?.trend?.slice(0, 5).map((point) => (
+                              <div key={`${point.modelName}-${point.trainedAt}`}>
+                                {formatTimestamp(point.trainedAt)} • AUC {formatPercent(point.auc !== null ? point.auc * 100 : null)} • PR-AUC {formatPercent(point.prAuc !== null ? point.prAuc * 100 : null)} • LogLoss {point.logLoss !== null && Number.isFinite(point.logLoss) ? point.logLoss.toFixed(4) : "—"}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                     <div>Model ID: {model?.id ?? "—"}</div>

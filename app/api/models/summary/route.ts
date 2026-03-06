@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getLatestHygieneModelVersion, getLatestSendTimeModelVersion } from "@/lib/model_versions";
+
+const OPTIMIZER_EXPERIMENT_EVENT = "optimizer:cohort-assigned";
 
 function safeDate(value: Date | null) {
   return value ? value.toISOString() : null;
@@ -36,6 +39,89 @@ function toPercent(value: number): number {
   return Number((value * 100).toFixed(2));
 }
 
+type OptimizerAssignment = {
+  broadcastId: string;
+  cohort: "optimized" | "control";
+  treated: boolean;
+};
+
+function parseOptimizerAssignment(properties: unknown): OptimizerAssignment | null {
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+    return null;
+  }
+
+  const payload = properties as {
+    broadcastId?: unknown;
+    cohort?: unknown;
+    treated?: unknown;
+  };
+
+  const broadcastId = typeof payload.broadcastId === "string" ? payload.broadcastId : null;
+  const cohort = payload.cohort === "optimized" || payload.cohort === "control" ? payload.cohort : null;
+  const treated = typeof payload.treated === "boolean" ? payload.treated : false;
+
+  if (!broadcastId || !cohort) {
+    return null;
+  }
+
+  return {
+    broadcastId,
+    cohort,
+    treated
+  };
+}
+
+type EvaluationTrendPoint = {
+  modelName: string;
+  trainedAt: string;
+  sampleCount: number;
+  auc: number | null;
+  prAuc: number | null;
+  logLoss: number | null;
+  brierScore: number | null;
+  threshold: number | null;
+};
+
+function readEvaluationMetric(metrics: unknown, key: "auc" | "pr_auc" | "log_loss" | "brier_score"): number | null {
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+    return null;
+  }
+  const evaluation = (metrics as { evaluation?: Record<string, unknown> }).evaluation;
+  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) {
+    return null;
+  }
+  const value = evaluation[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readClassificationThreshold(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const thresholds = (metadata as { thresholds?: Record<string, unknown> }).thresholds;
+  if (!thresholds || typeof thresholds !== "object" || Array.isArray(thresholds)) {
+    return null;
+  }
+  const value = thresholds.classification;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function buildTrendPoints(
+  versions: Array<{ modelName: string; trainedAt: Date; metrics: unknown; metadata: unknown }>,
+  sampleKey: "messages" | "contacts"
+): EvaluationTrendPoint[] {
+  return versions.map((version) => ({
+    modelName: version.modelName,
+    trainedAt: version.trainedAt.toISOString(),
+    sampleCount: readSampleCount(version.metrics, sampleKey),
+    auc: readEvaluationMetric(version.metrics, "auc"),
+    prAuc: readEvaluationMetric(version.metrics, "pr_auc"),
+    logLoss: readEvaluationMetric(version.metrics, "log_loss"),
+    brierScore: readEvaluationMetric(version.metrics, "brier_score"),
+    threshold: readClassificationThreshold(version.metadata)
+  }));
+}
+
 type OptimizerStatus = "warming_up" | "insufficient_data" | "no_baseline" | "healthy" | "underperforming";
 
 function chooseOptimizerStatus(input: {
@@ -55,7 +141,7 @@ function chooseOptimizerStatus(input: {
   if (input.optimizedDelivered < 50) {
     return {
       status: "insufficient_data",
-      note: "Need more delivered optimizer messages to measure performance"
+      note: "Need more delivered optimized-cohort messages to measure performance"
     };
   }
 
@@ -83,21 +169,15 @@ function chooseOptimizerStatus(input: {
 
   return {
     status: "underperforming",
-    note: "Observed uplift is negative; retrain and compare against manual send cohorts"
+    note: "Observed uplift is negative; retrain and compare against randomized control cohorts"
   };
 }
 
 export async function GET() {
   try {
     const [sendTime, hygiene] = await Promise.all([
-      prisma.modelVersion.findFirst({
-        where: { modelName: "send_time_v1" },
-        orderBy: { trainedAt: "desc" }
-      }),
-      prisma.modelVersion.findFirst({
-        where: { modelName: "hygiene_v1" },
-        orderBy: { trainedAt: "desc" }
-      })
+      getLatestSendTimeModelVersion(),
+      getLatestHygieneModelVersion()
     ]);
 
     const [
@@ -106,7 +186,10 @@ export async function GET() {
       sendTimeDecisionCountSinceTraining,
       sendTimeDecisionCountTotal,
       sendTimeDecisionStatsSinceTraining,
-      broadcastMessages
+      broadcastMessages,
+      optimizerAssignments,
+      sendTimeHistory,
+      hygieneHistory
     ] = await Promise.all([
       sendTime ? prisma.prediction.count({ where: { modelVersionId: sendTime.id } }) : 0,
       hygiene ? prisma.prediction.count({ where: { modelVersionId: hygiene.id } }) : 0,
@@ -147,7 +230,7 @@ export async function GET() {
         },
         select: {
           broadcastId: true,
-          scheduledSendAt: true,
+          contactId: true,
           outcome: {
             select: {
               deliveredAt: true,
@@ -156,6 +239,56 @@ export async function GET() {
             }
           }
         }
+      }),
+      prisma.event.findMany({
+        where: {
+          eventName: OPTIMIZER_EXPERIMENT_EVENT,
+          contactId: {
+            not: null
+          }
+        },
+        orderBy: {
+          timestamp: "desc"
+        },
+        select: {
+          contactId: true,
+          properties: true,
+          timestamp: true
+        }
+      }),
+      prisma.modelVersion.findMany({
+        where: {
+          modelName: {
+            in: ["send_time_real_v1", "send_time_v1"]
+          }
+        },
+        orderBy: {
+          trainedAt: "desc"
+        },
+        take: 10,
+        select: {
+          modelName: true,
+          trainedAt: true,
+          metrics: true,
+          metadata: true
+        }
+      }),
+      prisma.modelVersion.findMany({
+        where: {
+          modelName: {
+            in: ["hygiene_real_v1", "hygiene_v1"]
+          }
+        },
+        orderBy: {
+          trainedAt: "desc"
+        },
+        take: 10,
+        select: {
+          modelName: true,
+          trainedAt: true,
+          metrics: true,
+          metadata: true
+        }
       })
     ]);
 
@@ -163,7 +296,10 @@ export async function GET() {
     const hygieneSampleCount = hygiene ? readSampleCount(hygiene.metrics, "contacts") : 0;
 
     let sentBroadcastMessages = 0;
-    let optimizedSentMessages = 0;
+    let assignedMessages = 0;
+    let assignedOptimizedMessages = 0;
+    let assignedControlMessages = 0;
+    let treatedMessages = 0;
     let optimizedDelivered = 0;
     let optimizedClicked = 0;
     let controlDelivered = 0;
@@ -172,20 +308,44 @@ export async function GET() {
     let baselineSamples = 0;
     const optimizedBroadcastIds = new Set<string>();
 
+    const assignmentByMessageKey = new Map<string, OptimizerAssignment>();
+    for (const assignmentEvent of optimizerAssignments) {
+      const parsed = parseOptimizerAssignment(assignmentEvent.properties);
+      if (!parsed || !assignmentEvent.contactId) {
+        continue;
+      }
+
+      const key = `${parsed.broadcastId}:${assignmentEvent.contactId}`;
+      if (!assignmentByMessageKey.has(key)) {
+        assignmentByMessageKey.set(key, parsed);
+      }
+    }
+
     for (const message of broadcastMessages) {
       sentBroadcastMessages += 1;
-      const optimized = Boolean(message.scheduledSendAt);
-      if (optimized) {
-        optimizedSentMessages += 1;
-        if (message.broadcastId) {
-          optimizedBroadcastIds.add(message.broadcastId);
+
+      const assignmentKey = message.broadcastId ? `${message.broadcastId}:${message.contactId}` : null;
+      const assignment = assignmentKey ? assignmentByMessageKey.get(assignmentKey) : undefined;
+
+      if (assignment) {
+        assignedMessages += 1;
+        if (assignment.cohort === "optimized") {
+          assignedOptimizedMessages += 1;
+          if (message.broadcastId) {
+            optimizedBroadcastIds.add(message.broadcastId);
+          }
+          if (assignment.treated) {
+            treatedMessages += 1;
+          }
+        } else {
+          assignedControlMessages += 1;
         }
       }
 
       const delivered = Boolean(message.outcome?.deliveredAt);
       const clicked = Boolean(message.outcome?.clickedAt);
 
-      if (optimized) {
+      if (assignment?.cohort === "optimized") {
         if (delivered) {
           optimizedDelivered += 1;
           if (clicked) {
@@ -198,7 +358,7 @@ export async function GET() {
           baselineProbabilitySum += baselineProbability;
           baselineSamples += 1;
         }
-      } else if (delivered) {
+      } else if (assignment?.cohort === "control" && delivered) {
         controlDelivered += 1;
         if (clicked) {
           controlClicked += 1;
@@ -209,7 +369,7 @@ export async function GET() {
     const optimizedCtr = optimizedDelivered > 0 ? optimizedClicked / optimizedDelivered : 0;
     const controlCtr = controlDelivered > 0 ? controlClicked / controlDelivered : 0;
     const baselineCtr = baselineSamples > 0 ? baselineProbabilitySum / baselineSamples : null;
-    const coverageRatio = sentBroadcastMessages > 0 ? optimizedSentMessages / sentBroadcastMessages : 0;
+    const coverageRatio = sentBroadcastMessages > 0 ? assignedMessages / sentBroadcastMessages : 0;
 
     const upliftVsControlPct =
       controlCtr > 0 ? Number((((optimizedCtr - controlCtr) / controlCtr) * 100).toFixed(2)) : null;
@@ -239,6 +399,7 @@ export async function GET() {
         sendTime: sendTime
           ? {
               id: sendTime.id,
+              modelName: sendTime.modelName,
               trainedAt: safeDate(sendTime.trainedAt),
               metrics: sendTime.metrics ?? null,
               metadata: sendTime.metadata ?? null,
@@ -249,11 +410,17 @@ export async function GET() {
               expectedScorePct: expectedScore !== null ? toPercent(expectedScore) : null,
               expectedBaselinePct: expectedBaseline !== null ? toPercent(expectedBaseline) : null,
               expectedUpliftPct,
+              classificationThreshold: readClassificationThreshold(sendTime.metadata),
+              trend: buildTrendPoints(sendTimeHistory, "messages"),
               pooledPerformance: {
                 pooledBroadcasts: optimizedBroadcastIds.size,
                 sentMessages: sentBroadcastMessages,
-                optimizedMessages: optimizedSentMessages,
-                optimizationCoveragePct: Number((coverageRatio * 100).toFixed(2)),
+                  optimizedMessages: assignedOptimizedMessages,
+                  controlMessages: assignedControlMessages,
+                  treatedMessages,
+                  assignedMessages,
+                  assignmentCoveragePct: Number((coverageRatio * 100).toFixed(2)),
+                  optimizationCoveragePct: Number((coverageRatio * 100).toFixed(2)),
                 deliveredOptimized: optimizedDelivered,
                 clickedOptimized: optimizedClicked,
                 deliveredControl: controlDelivered,
@@ -272,11 +439,14 @@ export async function GET() {
         hygiene: hygiene
           ? {
               id: hygiene.id,
+              modelName: hygiene.modelName,
               trainedAt: safeDate(hygiene.trainedAt),
               metrics: hygiene.metrics ?? null,
               metadata: hygiene.metadata ?? null,
               predictionCount: hygienePredictions,
-              sampleCount: hygieneSampleCount
+              sampleCount: hygieneSampleCount,
+              classificationThreshold: readClassificationThreshold(hygiene.metadata),
+              trend: buildTrendPoints(hygieneHistory, "contacts")
             }
           : null
       }

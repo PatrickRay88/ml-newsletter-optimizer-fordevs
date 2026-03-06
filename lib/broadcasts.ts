@@ -9,6 +9,8 @@ const ALL_CONTACTS_SEGMENT_NAME = "All Contacts";
 const ALL_CONTACTS_SEGMENT_DEFINITION = { type: "all" } as const;
 const SCHEDULE_THRESHOLD_MS = 5 * 60 * 1000;
 const BULK_SEND_CHUNK_SIZE = 100;
+const OPTIMIZER_EXPERIMENT_EVENT = "optimizer:cohort-assigned";
+const DEFAULT_CONTROL_RATIO = 0.5;
 
 export const SEND_EXCLUDED_STATUSES = new Set<ContactStatus>([
   ContactStatus.SUPPRESSED,
@@ -169,6 +171,11 @@ export type OptimizerSendSummary = {
   throttled: number;
   skipped: number;
   reasons: Record<string, number>;
+  cohorts?: {
+    optimized: number;
+    control: number;
+    treated: number;
+  };
 };
 
 export type BroadcastSendSummary = {
@@ -198,6 +205,75 @@ type ImmediateRecipient = {
   contact: ContactSnapshot;
   recommendedAt: Date | null;
 };
+
+export type OptimizerExperimentCohort = "optimized" | "control";
+
+type OptimizerExperimentAssignment = {
+  cohort: OptimizerExperimentCohort;
+  treated: boolean;
+  recommendationReason: string | null;
+  recommendedAt: Date | null;
+  recommendedHour: number | null;
+  score: number | null;
+  baselineScore: number | null;
+  throttled: boolean;
+};
+
+function hashString(input: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+export function assignOptimizerExperimentCohort(
+  broadcastId: string,
+  contactId: string,
+  controlRatio = DEFAULT_CONTROL_RATIO
+): OptimizerExperimentCohort {
+  const normalizedRatio = Math.max(0, Math.min(1, controlRatio));
+  const bucket = hashString(`${broadcastId}:${contactId}`) % 10000;
+  return bucket < Math.floor(normalizedRatio * 10000) ? "control" : "optimized";
+}
+
+function buildOptimizerAssignmentEvents(params: {
+  broadcastId: string;
+  messageRows: Prisma.MessageCreateManyInput[];
+  assignmentsByContactId: Map<string, OptimizerExperimentAssignment>;
+}): Prisma.EventCreateManyInput[] {
+  const timestamp = new Date();
+  const events: Prisma.EventCreateManyInput[] = [];
+
+  for (const row of params.messageRows) {
+    const assignment = params.assignmentsByContactId.get(row.contactId);
+    if (!assignment) {
+      continue;
+    }
+
+    events.push({
+      contactId: row.contactId,
+      eventName: OPTIMIZER_EXPERIMENT_EVENT,
+      timestamp,
+      properties: {
+        broadcastId: params.broadcastId,
+        cohort: assignment.cohort,
+        treated: assignment.treated,
+        recommendationReason: assignment.recommendationReason,
+        recommendedAt: assignment.recommendedAt ? assignment.recommendedAt.toISOString() : null,
+        scheduledSendAt: row.scheduledSendAt ? new Date(row.scheduledSendAt).toISOString() : null,
+        recommendedHour: assignment.recommendedHour,
+        score: assignment.score,
+        baselineScore: assignment.baselineScore,
+        throttled: assignment.throttled,
+        experimentVersion: "optimizer_ab_v1"
+      }
+    });
+  }
+
+  return events;
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   if (size <= 0) {
@@ -418,20 +494,29 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
   let messageIds: string[] = [];
   const immediateRecipients: ImmediateRecipient[] = [];
   let scheduledCount = 0;
-  let optimizerSkipped = 0;
   const optimizerSummary = createEmptyOptimizerSummary();
+  const assignmentsByContactId = new Map<string, OptimizerExperimentAssignment>();
+  let controlCohortCount = 0;
+  let optimizedCohortCount = 0;
+  let treatedCount = 0;
 
   try {
     for (const contact of sendable) {
       let recommendedAt: Date | null = null;
       let recommendationReason: string | null = null;
       let throttled = false;
+      let recommendedHour: number | null = null;
+      let recommendationScore: number | null = null;
+      let recommendationBaselineScore: number | null = null;
 
       if (options?.useOptimizer !== false) {
         try {
           const recommendation = await recommendSendTime(contact.id);
           optimizerSummary.evaluated += 1;
           recommendationReason = recommendation.reason;
+          recommendedHour = recommendation.recommendedHour;
+          recommendationScore = recommendation.score;
+          recommendationBaselineScore = recommendation.baselineScore;
           if (recommendationReason) {
             optimizerSummary.reasons[recommendationReason] = (optimizerSummary.reasons[recommendationReason] ?? 0) + 1;
           }
@@ -446,7 +531,36 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
         optimizerSummary.throttled += 1;
       }
 
-      if (recommendedAt && recommendedAt.getTime() > Date.now() + SCHEDULE_THRESHOLD_MS) {
+      let cohort: OptimizerExperimentCohort | null = null;
+      if (options?.useOptimizer !== false) {
+        cohort = assignOptimizerExperimentCohort(broadcastId, contact.id);
+        if (cohort === "control") {
+          controlCohortCount += 1;
+        } else {
+          optimizedCohortCount += 1;
+        }
+      }
+
+      const shouldApplyRecommendation = cohort === "optimized" && Boolean(recommendedAt);
+      const sendAt = shouldApplyRecommendation ? recommendedAt : null;
+
+      if (cohort) {
+        if (shouldApplyRecommendation) {
+          treatedCount += 1;
+        }
+        assignmentsByContactId.set(contact.id, {
+          cohort,
+          treated: shouldApplyRecommendation,
+          recommendationReason,
+          recommendedAt,
+          recommendedHour,
+          score: recommendationScore,
+          baselineScore: recommendationBaselineScore,
+          throttled
+        });
+      }
+
+      if (sendAt && sendAt.getTime() > Date.now() + SCHEDULE_THRESHOLD_MS) {
         scheduledCount += 1;
         optimizerSummary.scheduled += 1;
         messageRows.push({
@@ -455,21 +569,15 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
           templateId: broadcast.templateId,
           resendMessageId: null,
           status: MessageStatus.SCHEDULED,
-          scheduledSendAt: recommendedAt,
+          scheduledSendAt: sendAt,
           lastStatusCheckAt: null
         });
         continue;
       }
 
-      if (options?.useOptimizer !== false && recommendationReason && !recommendedAt) {
-        optimizerSkipped += 1;
-        optimizerSummary.skipped += 1;
-        continue;
-      }
-
       immediateRecipients.push({
         contact,
-        recommendedAt
+        recommendedAt: sendAt
       });
     }
 
@@ -494,6 +602,14 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
     messageRows.push(...immediateSendResult.messageRows);
     messageIds = immediateSendResult.messageIds;
     optimizerSummary.sentImmediately = immediateSendResult.messageRows.length;
+
+    if (options?.useOptimizer !== false) {
+      optimizerSummary.cohorts = {
+        optimized: optimizedCohortCount,
+        control: controlCohortCount,
+        treated: treatedCount
+      };
+    }
   } catch (error) {
     await prisma.broadcast.update({
       where: { id: broadcastId },
@@ -517,7 +633,7 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
     return {
       broadcastId,
       totalRecipients: 0,
-      skippedRecipients: skipped.length + optimizerSkipped,
+      skippedRecipients: skipped.length,
       scheduledRecipients: 0,
       sendStrategy,
       alreadySent: false,
@@ -536,13 +652,19 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
       })
     );
 
+  const optimizerAssignmentEvents = buildOptimizerAssignmentEvents({
+    broadcastId,
+    messageRows,
+    assignmentsByContactId
+  });
+
   const nextStatus = scheduledCount === 0
     ? BroadcastStatus.SENT
     : scheduledCount === messageRows.length
       ? BroadcastStatus.SCHEDULED
       : BroadcastStatus.SENDING;
 
-  await prisma.$transaction([
+  const transactionSteps: Prisma.PrismaPromise<unknown>[] = [
     prisma.message.createMany({ data: messageRows }),
     prisma.broadcast.update({
       where: { id: broadcastId },
@@ -552,14 +674,20 @@ export async function sendBroadcastById(broadcastId: string, options?: Broadcast
       }
     }),
     ...contactUpdates
-  ]);
+  ];
+
+  if (optimizerAssignmentEvents.length > 0) {
+    transactionSteps.push(prisma.event.createMany({ data: optimizerAssignmentEvents }));
+  }
+
+  await prisma.$transaction(transactionSteps);
 
   const durationMs = Date.now() - startedAt;
 
   return {
     broadcastId,
     totalRecipients: messageRows.length,
-    skippedRecipients: skipped.length + optimizerSkipped,
+    skippedRecipients: skipped.length,
     scheduledRecipients: scheduledCount,
     sendStrategy,
     alreadySent: false,

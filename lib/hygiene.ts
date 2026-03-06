@@ -1,6 +1,7 @@
 import { ContactStatus, HygieneRiskLevel, Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { buildHygieneFeatures, predictHygieneRisk } from "./hygiene_model";
+import { getLatestHygieneModelVersion } from "./model_versions";
 
 export type HygieneComputationInput = {
   id: string;
@@ -131,10 +132,7 @@ export function computeHygieneScore(
 
 export async function runHygieneSweep(options: HygieneSweepOptions = {}): Promise<HygieneSweepSummary> {
   const now = options.now ?? new Date();
-  const hygieneModel = await prisma.modelVersion.findFirst({
-    where: { modelName: "hygiene_v1" },
-    orderBy: { trainedAt: "desc" }
-  });
+  const hygieneModel = await getLatestHygieneModelVersion();
 
   const modelMetadata = (hygieneModel?.metadata ?? {}) as { weights?: number[]; baseRate?: number };
   const modelWeights = Array.isArray(modelMetadata.weights) ? modelMetadata.weights : null;
