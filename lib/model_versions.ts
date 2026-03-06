@@ -35,3 +35,11 @@ export async function getLatestHygieneModelVersion(): Promise<ModelVersion | nul
 export async function getLatestSendTimeModelVersion(): Promise<ModelVersion | null> {
   return getPreferredModelVersion(["send_time_real_v1", "send_time_v1"]);
 }
+
+export async function getLatestRealHygieneModelVersion(): Promise<ModelVersion | null> {
+  return getPreferredModelVersion(["hygiene_real_v1"]);
+}
+
+export async function getLatestRealSendTimeModelVersion(): Promise<ModelVersion | null> {
+  return getPreferredModelVersion(["send_time_real_v1"]);
+}

@@ -1,5 +1,6 @@
 import { ContactStatus } from "@prisma/client";
 import { prisma } from "./prisma";
+import { getLatestRealSendTimeModelVersion } from "./model_versions";
 
 const HOURS_PER_WEEK = 7 * 24;
 const SEGMENT_TAG_PREFIX = "segment=";
@@ -283,6 +284,49 @@ function getNextDateForHour(reference: Date, hourOfWeekValue: number, timezone?:
   return result;
 }
 
+type StoredSendTimeRecommendation = {
+  recommendedHour: number;
+  baselineScore: number;
+  sourceModel: string;
+  threshold: number | null;
+};
+
+function parseStoredSendTimeRecommendation(payload: unknown): StoredSendTimeRecommendation | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+
+  const candidate = payload as {
+    recommendedHour?: unknown;
+    baselineScore?: unknown;
+    sourceModel?: unknown;
+    threshold?: unknown;
+  };
+
+  const recommendedHour = Number(candidate.recommendedHour);
+  const baselineScore = Number(candidate.baselineScore ?? 0);
+  const sourceModel = typeof candidate.sourceModel === "string" ? candidate.sourceModel : "send_time_real_v1";
+  const threshold =
+    typeof candidate.threshold === "number" && Number.isFinite(candidate.threshold)
+      ? candidate.threshold
+      : null;
+
+  if (!Number.isInteger(recommendedHour) || recommendedHour < 0 || recommendedHour >= HOURS_PER_WEEK) {
+    return null;
+  }
+
+  if (!Number.isFinite(baselineScore)) {
+    return null;
+  }
+
+  return {
+    recommendedHour,
+    baselineScore,
+    sourceModel,
+    threshold
+  };
+}
+
 export type OptimizerRecommendation = {
   recommendedHour: number | null;
   recommendedAt: Date | null;
@@ -317,6 +361,73 @@ export async function recommendSendTime(contactId: string, referenceDate = new D
       reason: "Contact not active",
       throttled: false
     };
+  }
+
+  const realModel = await getLatestRealSendTimeModelVersion();
+  if (realModel) {
+    const realPrediction = await prisma.prediction.findFirst({
+      where: {
+        modelVersionId: realModel.id,
+        contactId: contact.id,
+        targetType: "send_time_recommendation"
+      },
+      orderBy: {
+        createdAt: "desc"
+      }
+    });
+
+    if (realPrediction && typeof realPrediction.score === "number" && Number.isFinite(realPrediction.score)) {
+      const stored = parseStoredSendTimeRecommendation(realPrediction.payload);
+      if (stored) {
+        const hour = stored.recommendedHour;
+        const score = realPrediction.score;
+        const baseline = stored.baselineScore;
+        let recommendedAt = getNextDateForHour(referenceDate, hour, contact.timezone ?? undefined);
+        let throttled = false;
+
+        if (contact.lastMessageSentAt) {
+          const earliest = new Date(contact.lastMessageSentAt.getTime() + ONE_DAY_MS);
+          if (earliest > referenceDate) {
+            throttled = true;
+          }
+
+          if (recommendedAt < earliest) {
+            recommendedAt = getNextDateForHour(earliest, hour, contact.timezone ?? undefined);
+          }
+        }
+
+        const rationale = throttled
+          ? `Real model recommendation (${stored.sourceModel}) • throttled 24h cooldown`
+          : `Real model recommendation (${stored.sourceModel})`;
+
+        await prisma.optimizerDecision.create({
+          data: {
+            contactId: contact.id,
+            recommendedHour: hour,
+            score,
+            baselineScore: baseline,
+            rationale: {
+              sourceModel: stored.sourceModel,
+              modelVersionId: realModel.id,
+              threshold: stored.threshold,
+              generatedAt: referenceDate.toISOString(),
+              recommendedAt: recommendedAt.toISOString(),
+              throttled,
+              usedRealModel: true
+            }
+          }
+        });
+
+        return {
+          recommendedHour: hour,
+          recommendedAt,
+          score,
+          baselineScore: baseline,
+          reason: rationale,
+          throttled
+        };
+      }
+    }
   }
 
   const histograms = await getHistograms();

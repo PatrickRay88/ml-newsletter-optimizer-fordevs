@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false
 import argparse
 import json
 import math
@@ -10,10 +11,11 @@ from typing import Any, Dict, List, Tuple
 try:
     import joblib
     import numpy as np
-    from sklearn.ensemble import RandomForestClassifier
-    from sklearn.feature_extraction import DictVectorizer
-    from sklearn.linear_model import LogisticRegression
-    from sklearn.metrics import (
+    from sklearn.ensemble import RandomForestClassifier  # pyright: ignore[reportMissingImports]
+    from sklearn.feature_extraction import DictVectorizer  # pyright: ignore[reportMissingImports]
+    from sklearn.isotonic import IsotonicRegression  # pyright: ignore[reportMissingImports]
+    from sklearn.linear_model import LogisticRegression  # pyright: ignore[reportMissingImports]
+    from sklearn.metrics import (  # pyright: ignore[reportMissingImports]
         accuracy_score,
         average_precision_score,
         brier_score_loss,
@@ -28,10 +30,22 @@ except ImportError as exc:
     print(str(exc), file=sys.stderr)
     raise SystemExit(2)
 
+HOURS_PER_WEEK = 7 * 24
 
-def _safe_probability_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[str, Any]:
+
+def _safe_probability_metrics(
+    y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5
+) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {}
-    y_pred = (y_prob >= 0.5).astype(int)
+    y_pred = (y_prob >= threshold).astype(int)
+
+    tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+    fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+    fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+
+    precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    recall = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
     accuracy = float(accuracy_score(y_true, y_pred))
     metrics["accuracy"] = accuracy if math.isfinite(accuracy) else None
@@ -59,15 +73,71 @@ def _safe_probability_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[st
     except ValueError:
         metrics["brier_score"] = None
 
+    metrics["precision"] = float(precision)
+    metrics["recall"] = float(recall)
+    metrics["f1"] = float(f1)
+    metrics["threshold"] = float(threshold)
+
     return metrics
 
 
-def _split_point(count: int, test_ratio: float = 0.2) -> int:
-    if count <= 1:
-        return count
-    split = int(count * (1.0 - test_ratio))
-    split = max(1, min(count - 1, split))
-    return split
+def _split_points(count: int, train_ratio: float = 0.7, cal_ratio: float = 0.15) -> Tuple[int, int]:
+    if count < 6:
+        train_end = max(1, count - 2)
+        cal_end = max(train_end + 1, count - 1)
+        return train_end, cal_end
+
+    train_end = int(count * train_ratio)
+    cal_end = int(count * (train_ratio + cal_ratio))
+
+    train_end = max(1, min(count - 2, train_end))
+    cal_end = max(train_end + 1, min(count - 1, cal_end))
+    return train_end, cal_end
+
+
+def _fit_calibrator(y_true: np.ndarray, y_prob: np.ndarray) -> Tuple[Any, str]:
+    if y_true.size < 20 or np.unique(y_true).size < 2:
+        return None, "none"
+
+    calibrator = IsotonicRegression(out_of_bounds="clip")
+    calibrator.fit(y_prob, y_true)
+    return calibrator, "isotonic"
+
+
+def _apply_calibrator(calibrator: Any, y_prob: np.ndarray) -> np.ndarray:
+    if calibrator is None:
+        return y_prob
+
+    transformed = calibrator.transform(y_prob)
+    return np.asarray(np.clip(transformed, 0.0, 1.0), dtype=np.float64)
+
+
+def _tune_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> Dict[str, float]:
+    if y_true.size == 0:
+        return {"threshold": 0.5, "precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+    candidate_thresholds = np.linspace(0.05, 0.95, 19)
+    best = {"threshold": 0.5, "precision": 0.0, "recall": 0.0, "f1": 0.0}
+
+    for threshold in candidate_thresholds:
+        y_pred = (y_prob >= threshold).astype(int)
+        tp = int(np.sum((y_true == 1) & (y_pred == 1)))
+        fp = int(np.sum((y_true == 0) & (y_pred == 1)))
+        fn = int(np.sum((y_true == 1) & (y_pred == 0)))
+
+        precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+        recall = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+
+        if f1 > best["f1"] or (f1 == best["f1"] and precision > best["precision"]):
+            best = {
+                "threshold": float(threshold),
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1": float(f1),
+            }
+
+    return best
 
 
 def _extract_send_time_features(sample: Dict[str, Any]) -> Dict[str, Any]:
@@ -75,7 +145,63 @@ def _extract_send_time_features(sample: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in sample.items() if key not in ignore}
 
 
-def train_send_time(samples: List[Dict[str, Any]], artifacts_root: Path, trained_at: str) -> Dict[str, Any]:
+def _build_recommendations(
+    model: Any,
+    vectorizer: DictVectorizer,
+    calibrator: Any,
+    contact_samples: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    recommendations: List[Dict[str, Any]] = []
+
+    for contact in contact_samples:
+        contact_id = str(contact.get("contact_id", "")).strip()
+        if not contact_id:
+            continue
+
+        propensity = float(contact.get("propensity", 0.0))
+        lifecycle_stage = str(contact.get("lifecycle_stage", "unknown"))
+        tag_count = int(contact.get("tag_count", 0))
+
+        candidate_rows: List[Dict[str, Any]] = []
+        for hour in range(HOURS_PER_WEEK):
+            candidate_rows.append(
+                {
+                    "hour_of_week": hour,
+                    "day_of_week": hour // 24,
+                    "hour_of_day": hour % 24,
+                    "is_weekend": 1 if (hour // 24) in (0, 6) else 0,
+                    "propensity": propensity,
+                    "lifecycle_stage": lifecycle_stage,
+                    "tag_count": tag_count,
+                }
+            )
+
+        x = vectorizer.transform(candidate_rows)
+        raw_prob = model.predict_proba(x)[:, 1]
+        calibrated_prob = _apply_calibrator(calibrator, raw_prob)
+
+        best_index = int(np.argmax(calibrated_prob))
+        best_score = float(calibrated_prob[best_index])
+        baseline_score = float(np.mean(calibrated_prob))
+
+        recommendations.append(
+            {
+                "contact_id": contact_id,
+                "recommended_hour": best_index,
+                "score": best_score,
+                "baseline_score": baseline_score,
+            }
+        )
+
+    return recommendations
+
+
+def train_send_time(
+    samples: List[Dict[str, Any]],
+    contact_samples: List[Dict[str, Any]],
+    artifacts_root: Path,
+    trained_at: str,
+) -> Dict[str, Any]:
     if not samples:
         return {
             "status": "no_data",
@@ -85,6 +211,9 @@ def train_send_time(samples: List[Dict[str, Any]], artifacts_root: Path, trained
             "metrics": {},
             "artifact_relative_path": None,
             "feature_names": [],
+            "calibration": {"method": "none"},
+            "threshold": {"classification": 0.5, "precision": 0.0, "recall": 0.0, "f1": 0.0},
+            "contact_recommendations": [],
             "warning": "No send-time samples were provided",
         }
 
@@ -102,16 +231,28 @@ def train_send_time(samples: List[Dict[str, Any]], artifacts_root: Path, trained
             "metrics": {},
             "artifact_relative_path": None,
             "feature_names": [],
+            "calibration": {"method": "none"},
+            "threshold": {"classification": 0.5, "precision": 0.0, "recall": 0.0, "f1": 0.0},
+            "contact_recommendations": [],
             "warning": "Send-time dataset has only one target class",
         }
 
-    split = _split_point(len(ordered), 0.2)
-    train_rows = ordered[:split]
-    test_rows = ordered[split:]
+    train_end, cal_end = _split_points(len(ordered))
+    train_rows = ordered[:train_end]
+    cal_rows = ordered[train_end:cal_end]
+    test_rows = ordered[cal_end:]
+
+    if len(cal_rows) == 0:
+        cal_rows = train_rows[-1:]
+    if len(test_rows) == 0:
+        test_rows = cal_rows
 
     vectorizer = DictVectorizer(sparse=False)
     x_train = vectorizer.fit_transform([_extract_send_time_features(row) for row in train_rows])
     y_train = np.array([int(row.get("clicked", 0)) for row in train_rows], dtype=np.int32)
+
+    x_cal = vectorizer.transform([_extract_send_time_features(row) for row in cal_rows])
+    y_cal = np.array([int(row.get("clicked", 0)) for row in cal_rows], dtype=np.int32)
 
     x_test = vectorizer.transform([_extract_send_time_features(row) for row in test_rows])
     y_test = np.array([int(row.get("clicked", 0)) for row in test_rows], dtype=np.int32)
@@ -126,8 +267,20 @@ def train_send_time(samples: List[Dict[str, Any]], artifacts_root: Path, trained
     )
     model.fit(x_train, y_train)
 
-    y_prob = model.predict_proba(x_test)[:, 1]
-    metrics = _safe_probability_metrics(y_test, y_prob)
+    y_prob_cal_raw = model.predict_proba(x_cal)[:, 1]
+    calibrator, calibration_method = _fit_calibrator(y_cal, y_prob_cal_raw)
+    y_prob_calibrated = _apply_calibrator(calibrator, y_prob_cal_raw)
+    tuned_threshold = _tune_threshold(y_cal, y_prob_calibrated)
+
+    y_prob_test_raw = model.predict_proba(x_test)[:, 1]
+    y_prob_test_calibrated = _apply_calibrator(calibrator, y_prob_test_raw)
+
+    metrics = _safe_probability_metrics(
+        y_test, y_prob_test_calibrated, threshold=tuned_threshold["threshold"]
+    )
+    raw_metrics = _safe_probability_metrics(y_test, y_prob_test_raw, threshold=0.5)
+
+    recommendations = _build_recommendations(model, vectorizer, calibrator, contact_samples)
 
     artifact_dir = artifacts_root / "send_time_real_v1" / trained_at.replace(":", "-")
     artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -137,6 +290,9 @@ def train_send_time(samples: List[Dict[str, Any]], artifacts_root: Path, trained
         {
             "vectorizer": vectorizer,
             "model": model,
+            "calibrator": calibrator,
+            "calibration_method": calibration_method,
+            "threshold": tuned_threshold,
             "trained_at": trained_at,
             "feature_names": list(vectorizer.get_feature_names_out()),
         },
@@ -149,8 +305,12 @@ def train_send_time(samples: List[Dict[str, Any]], artifacts_root: Path, trained
         "sample_count": len(ordered),
         "positive_rate": positive_rate,
         "metrics": metrics,
+        "raw_metrics": raw_metrics,
         "artifact_relative_path": str(artifact_file.relative_to(artifacts_root)),
         "feature_names": list(vectorizer.get_feature_names_out()),
+        "calibration": {"method": calibration_method},
+        "threshold": tuned_threshold,
+        "contact_recommendations": recommendations,
         "warning": None,
     }
 
@@ -199,6 +359,8 @@ def train_hygiene(samples: List[Dict[str, Any]], artifacts_root: Path, trained_a
             ],
             "coefficients": [0.0, 0.0, 0.0, 0.0, 0.0],
             "base_rate": 0.05,
+            "calibration": {"method": "none"},
+            "threshold": {"classification": 0.5, "precision": 0.0, "recall": 0.0, "f1": 0.0},
             "warning": "No hygiene samples were provided",
         }
 
@@ -222,14 +384,25 @@ def train_hygiene(samples: List[Dict[str, Any]], artifacts_root: Path, trained_a
             "feature_names": feature_names,
             "coefficients": coefficients,
             "base_rate": positive_rate,
+            "calibration": {"method": "none"},
+            "threshold": {"classification": 0.5, "precision": 0.0, "recall": 0.0, "f1": 0.0},
             "warning": "Hygiene dataset has only one target class",
         }
 
-    split = _split_point(int(y.size), 0.2)
-    x_train = x[:split]
-    y_train = y[:split]
-    x_test = x[split:]
-    y_test = y[split:]
+    train_end, cal_end = _split_points(int(y.size))
+    x_train = x[:train_end]
+    y_train = y[:train_end]
+    x_cal = x[train_end:cal_end]
+    y_cal = y[train_end:cal_end]
+    x_test = x[cal_end:]
+    y_test = y[cal_end:]
+
+    if x_cal.shape[0] == 0:
+        x_cal = x_train[-1:]
+        y_cal = y_train[-1:]
+    if x_test.shape[0] == 0:
+        x_test = x_cal
+        y_test = y_cal
 
     model = LogisticRegression(
         fit_intercept=False,
@@ -240,8 +413,17 @@ def train_hygiene(samples: List[Dict[str, Any]], artifacts_root: Path, trained_a
     )
     model.fit(x_train, y_train)
 
-    y_prob = model.predict_proba(x_test)[:, 1]
-    metrics = _safe_probability_metrics(y_test, y_prob)
+    y_prob_cal_raw = model.predict_proba(x_cal)[:, 1]
+    calibrator, calibration_method = _fit_calibrator(y_cal, y_prob_cal_raw)
+    y_prob_calibrated = _apply_calibrator(calibrator, y_prob_cal_raw)
+    tuned_threshold = _tune_threshold(y_cal, y_prob_calibrated)
+
+    y_prob_test_raw = model.predict_proba(x_test)[:, 1]
+    y_prob_test_calibrated = _apply_calibrator(calibrator, y_prob_test_raw)
+    metrics = _safe_probability_metrics(
+        y_test, y_prob_test_calibrated, threshold=tuned_threshold["threshold"]
+    )
+    raw_metrics = _safe_probability_metrics(y_test, y_prob_test_raw, threshold=0.5)
 
     coefficients = model.coef_[0].tolist()
 
@@ -256,6 +438,9 @@ def train_hygiene(samples: List[Dict[str, Any]], artifacts_root: Path, trained_a
             "feature_names": feature_names,
             "coefficients": coefficients,
             "base_rate": positive_rate,
+            "calibrator": calibrator,
+            "calibration_method": calibration_method,
+            "threshold": tuned_threshold,
         },
         artifact_file,
     )
@@ -266,10 +451,13 @@ def train_hygiene(samples: List[Dict[str, Any]], artifacts_root: Path, trained_a
         "sample_count": int(y.size),
         "positive_rate": positive_rate,
         "metrics": metrics,
+        "raw_metrics": raw_metrics,
         "artifact_relative_path": str(artifact_file.relative_to(artifacts_root)),
         "feature_names": feature_names,
         "coefficients": coefficients,
         "base_rate": positive_rate,
+        "calibration": {"method": calibration_method},
+        "threshold": tuned_threshold,
         "warning": None,
     }
 
@@ -281,13 +469,16 @@ def main() -> None:
 
     payload = json.load(sys.stdin)
     send_time_samples = payload.get("send_time_samples", [])
+    send_time_contact_samples = payload.get("send_time_contact_samples", [])
     hygiene_samples = payload.get("hygiene_samples", [])
 
     trained_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     artifacts_root = Path(args.artifacts_dir).resolve()
     artifacts_root.mkdir(parents=True, exist_ok=True)
 
-    send_time_result = train_send_time(send_time_samples, artifacts_root, trained_at)
+    send_time_result = train_send_time(
+        send_time_samples, send_time_contact_samples, artifacts_root, trained_at
+    )
     hygiene_result = train_hygiene(hygiene_samples, artifacts_root, trained_at)
 
     result = {

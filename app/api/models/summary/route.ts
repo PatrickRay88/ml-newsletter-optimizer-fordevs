@@ -37,6 +37,57 @@ function toPercent(value: number): number {
   return Number((value * 100).toFixed(2));
 }
 
+type EvaluationTrendPoint = {
+  modelName: string;
+  trainedAt: string;
+  sampleCount: number;
+  auc: number | null;
+  prAuc: number | null;
+  logLoss: number | null;
+  brierScore: number | null;
+  threshold: number | null;
+};
+
+function readEvaluationMetric(metrics: unknown, key: "auc" | "pr_auc" | "log_loss" | "brier_score"): number | null {
+  if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+    return null;
+  }
+  const evaluation = (metrics as { evaluation?: Record<string, unknown> }).evaluation;
+  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) {
+    return null;
+  }
+  const value = evaluation[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readClassificationThreshold(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const thresholds = (metadata as { thresholds?: Record<string, unknown> }).thresholds;
+  if (!thresholds || typeof thresholds !== "object" || Array.isArray(thresholds)) {
+    return null;
+  }
+  const value = thresholds.classification;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function buildTrendPoints(
+  versions: Array<{ modelName: string; trainedAt: Date; metrics: unknown; metadata: unknown }>,
+  sampleKey: "messages" | "contacts"
+): EvaluationTrendPoint[] {
+  return versions.map((version) => ({
+    modelName: version.modelName,
+    trainedAt: version.trainedAt.toISOString(),
+    sampleCount: readSampleCount(version.metrics, sampleKey),
+    auc: readEvaluationMetric(version.metrics, "auc"),
+    prAuc: readEvaluationMetric(version.metrics, "pr_auc"),
+    logLoss: readEvaluationMetric(version.metrics, "log_loss"),
+    brierScore: readEvaluationMetric(version.metrics, "brier_score"),
+    threshold: readClassificationThreshold(version.metadata)
+  }));
+}
+
 type OptimizerStatus = "warming_up" | "insufficient_data" | "no_baseline" | "healthy" | "underperforming";
 
 function chooseOptimizerStatus(input: {
@@ -101,7 +152,9 @@ export async function GET() {
       sendTimeDecisionCountSinceTraining,
       sendTimeDecisionCountTotal,
       sendTimeDecisionStatsSinceTraining,
-      broadcastMessages
+      broadcastMessages,
+      sendTimeHistory,
+      hygieneHistory
     ] = await Promise.all([
       sendTime ? prisma.prediction.count({ where: { modelVersionId: sendTime.id } }) : 0,
       hygiene ? prisma.prediction.count({ where: { modelVersionId: hygiene.id } }) : 0,
@@ -150,6 +203,40 @@ export async function GET() {
               metadata: true
             }
           }
+        }
+      }),
+      prisma.modelVersion.findMany({
+        where: {
+          modelName: {
+            in: ["send_time_real_v1", "send_time_v1"]
+          }
+        },
+        orderBy: {
+          trainedAt: "desc"
+        },
+        take: 10,
+        select: {
+          modelName: true,
+          trainedAt: true,
+          metrics: true,
+          metadata: true
+        }
+      }),
+      prisma.modelVersion.findMany({
+        where: {
+          modelName: {
+            in: ["hygiene_real_v1", "hygiene_v1"]
+          }
+        },
+        orderBy: {
+          trainedAt: "desc"
+        },
+        take: 10,
+        select: {
+          modelName: true,
+          trainedAt: true,
+          metrics: true,
+          metadata: true
         }
       })
     ]);
@@ -245,6 +332,8 @@ export async function GET() {
               expectedScorePct: expectedScore !== null ? toPercent(expectedScore) : null,
               expectedBaselinePct: expectedBaseline !== null ? toPercent(expectedBaseline) : null,
               expectedUpliftPct,
+              classificationThreshold: readClassificationThreshold(sendTime.metadata),
+              trend: buildTrendPoints(sendTimeHistory, "messages"),
               pooledPerformance: {
                 pooledBroadcasts: optimizedBroadcastIds.size,
                 sentMessages: sentBroadcastMessages,
@@ -273,7 +362,9 @@ export async function GET() {
               metrics: hygiene.metrics ?? null,
               metadata: hygiene.metadata ?? null,
               predictionCount: hygienePredictions,
-              sampleCount: hygieneSampleCount
+              sampleCount: hygieneSampleCount,
+              classificationThreshold: readClassificationThreshold(hygiene.metadata),
+              trend: buildTrendPoints(hygieneHistory, "contacts")
             }
           : null
       }

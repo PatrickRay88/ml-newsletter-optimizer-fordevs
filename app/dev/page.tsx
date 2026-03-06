@@ -29,6 +29,17 @@ type ModelSummary = {
   metadata: unknown;
   predictionCount: number;
   sampleCount?: number;
+  classificationThreshold?: number | null;
+  trend?: Array<{
+    modelName: string;
+    trainedAt: string;
+    sampleCount: number;
+    auc: number | null;
+    prAuc: number | null;
+    logLoss: number | null;
+    brierScore: number | null;
+    threshold: number | null;
+  }>;
   decisionCountSinceTraining?: number;
   decisionCountTotal?: number;
   expectedScorePct?: number | null;
@@ -399,6 +410,7 @@ export default function DevUtilitiesPage() {
                           {model?.pooledPerformance?.statusNote ?? "No optimizer telemetry yet"}
                         </div>
                         <div>Message samples: {model?.sampleCount ?? 0}</div>
+                        <div>Classification threshold: {formatPercent(model?.classificationThreshold !== null && model?.classificationThreshold !== undefined ? model.classificationThreshold * 100 : null)}</div>
                         <div>Expected CTR (optimizer): {formatPercent(model?.expectedScorePct)}</div>
                         <div>Expected CTR (baseline): {formatPercent(model?.expectedBaselinePct)}</div>
                         <div>Expected uplift: {formatPercent(model?.expectedUpliftPct)}</div>
@@ -419,12 +431,33 @@ export default function DevUtilitiesPage() {
                         <div>Realized uplift vs baseline: {formatPercent(model?.pooledPerformance?.upliftVsBaselinePct)}</div>
                         <div>Optimizer decisions (since training): {model?.decisionCountSinceTraining ?? 0}</div>
                         <div>Optimizer decisions (total): {model?.decisionCountTotal ?? 0}</div>
+                        {(model?.trend?.length ?? 0) > 0 && (
+                          <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.2rem", color: "#94a3b8" }}>
+                            <strong style={{ color: "#cbd5f5" }}>Recent performance trend</strong>
+                            {model?.trend?.slice(0, 5).map((point) => (
+                              <div key={`${point.modelName}-${point.trainedAt}`}>
+                                {formatTimestamp(point.trainedAt)} • AUC {formatPercent(point.auc !== null ? point.auc * 100 : null)} • PR-AUC {formatPercent(point.prAuc !== null ? point.prAuc * 100 : null)} • LogLoss {point.logLoss !== null && Number.isFinite(point.logLoss) ? point.logLoss.toFixed(4) : "—"}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <>
                         <div>Model family: {model?.modelName ?? "—"}</div>
                         <div>Predictions: {model?.predictionCount ?? 0}</div>
                         <div>Contact samples: {model?.sampleCount ?? 0}</div>
+                        <div>Classification threshold: {formatPercent(model?.classificationThreshold !== null && model?.classificationThreshold !== undefined ? model.classificationThreshold * 100 : null)}</div>
+                        {(model?.trend?.length ?? 0) > 0 && (
+                          <div style={{ marginTop: "0.45rem", display: "grid", gap: "0.2rem", color: "#94a3b8" }}>
+                            <strong style={{ color: "#cbd5f5" }}>Recent performance trend</strong>
+                            {model?.trend?.slice(0, 5).map((point) => (
+                              <div key={`${point.modelName}-${point.trainedAt}`}>
+                                {formatTimestamp(point.trainedAt)} • AUC {formatPercent(point.auc !== null ? point.auc * 100 : null)} • PR-AUC {formatPercent(point.prAuc !== null ? point.prAuc * 100 : null)} • LogLoss {point.logLoss !== null && Number.isFinite(point.logLoss) ? point.logLoss.toFixed(4) : "—"}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                     <div>Model ID: {model?.id ?? "—"}</div>

@@ -18,6 +18,13 @@ type SendTimeSample = {
   clicked: number;
 };
 
+type SendTimeContactSample = {
+  contact_id: string;
+  propensity: number;
+  lifecycle_stage: string;
+  tag_count: number;
+};
+
 type HygieneSample = {
   contact_id: string;
   bias: number;
@@ -34,10 +41,26 @@ type PythonModelResult = {
   sample_count: number;
   positive_rate: number;
   metrics: Record<string, number | null>;
+  raw_metrics?: Record<string, number | null>;
   artifact_relative_path: string | null;
   feature_names: string[];
   coefficients?: number[];
   base_rate?: number;
+  calibration?: {
+    method?: string;
+  };
+  threshold?: {
+    threshold?: number;
+    precision?: number;
+    recall?: number;
+    f1?: number;
+  };
+  contact_recommendations?: Array<{
+    contact_id: string;
+    recommended_hour: number;
+    score: number;
+    baseline_score: number;
+  }>;
   warning?: string | null;
 };
 
@@ -55,6 +78,8 @@ export type TrainRealModelsSummary = {
     positiveRate: number;
     status: string;
     algorithm: string;
+    recommendationCount: number;
+    threshold: number;
     warning: string | null;
   };
   hygiene: {
@@ -64,6 +89,7 @@ export type TrainRealModelsSummary = {
     status: string;
     algorithm: string;
     predictionCount: number;
+    threshold: number;
     warning: string | null;
   };
 };
@@ -157,6 +183,27 @@ async function buildSendTimeDataset(): Promise<SendTimeSample[]> {
   return rows;
 }
 
+async function buildSendTimeContactDataset(): Promise<SendTimeContactSample[]> {
+  const contacts = await prisma.contact.findMany({
+    where: {
+      status: ContactStatus.ACTIVE
+    },
+    select: {
+      id: true,
+      propensity: true,
+      lifecycleStage: true,
+      tags: true
+    }
+  });
+
+  return contacts.map((contact) => ({
+    contact_id: contact.id,
+    propensity: toNumber(contact.propensity),
+    lifecycle_stage: normalizeLifecycleStage(contact.lifecycleStage),
+    tag_count: Array.isArray(contact.tags) ? contact.tags.length : 0
+  }));
+}
+
 async function buildHygieneDataset(): Promise<HygieneSample[]> {
   const now = new Date();
 
@@ -230,6 +277,7 @@ async function buildHygieneDataset(): Promise<HygieneSample[]> {
 
 function runPythonTrainer(payload: {
   send_time_samples: SendTimeSample[];
+  send_time_contact_samples: SendTimeContactSample[];
   hygiene_samples: HygieneSample[];
 }): Promise<PythonTrainingResult> {
   return new Promise(async (resolve, reject) => {
@@ -299,13 +347,15 @@ function runPythonTrainer(payload: {
 }
 
 export async function trainRealModels(): Promise<TrainRealModelsSummary> {
-  const [sendDataset, hygieneDataset] = await Promise.all([
+  const [sendDataset, sendContactDataset, hygieneDataset] = await Promise.all([
     buildSendTimeDataset(),
+    buildSendTimeContactDataset(),
     buildHygieneDataset()
   ]);
 
   const trained = await runPythonTrainer({
     send_time_samples: sendDataset,
+    send_time_contact_samples: sendContactDataset,
     hygiene_samples: hygieneDataset
   });
 
@@ -321,14 +371,23 @@ export async function trainRealModels(): Promise<TrainRealModelsSummary> {
           messages: trained.send_time.sample_count
         },
         evaluation: trained.send_time.metrics,
+        rawEvaluation: trained.send_time.raw_metrics ?? null,
         positiveRate: trained.send_time.positive_rate,
-        trainingStatus: trained.send_time.status
+        trainingStatus: trained.send_time.status,
+        threshold: trained.send_time.threshold ?? null
       },
       metadata: {
         source: "python_sklearn",
         algorithm: trained.send_time.algorithm,
         featureNames: trained.send_time.feature_names,
         artifactRelativePath: trained.send_time.artifact_relative_path,
+        calibration: trained.send_time.calibration ?? { method: "none" },
+        thresholds: {
+          classification: trained.send_time.threshold?.threshold ?? 0.5,
+          precision: trained.send_time.threshold?.precision ?? null,
+          recall: trained.send_time.threshold?.recall ?? null,
+          f1: trained.send_time.threshold?.f1 ?? null
+        },
         warning: trained.send_time.warning ?? null
       }
     }
@@ -354,8 +413,10 @@ export async function trainRealModels(): Promise<TrainRealModelsSummary> {
           contacts: trained.hygiene.sample_count
         },
         evaluation: trained.hygiene.metrics,
+        rawEvaluation: trained.hygiene.raw_metrics ?? null,
         positiveRate: trained.hygiene.positive_rate,
-        trainingStatus: trained.hygiene.status
+        trainingStatus: trained.hygiene.status,
+        threshold: trained.hygiene.threshold ?? null
       },
       metadata: {
         source: "python_sklearn",
@@ -364,7 +425,14 @@ export async function trainRealModels(): Promise<TrainRealModelsSummary> {
         artifactRelativePath: trained.hygiene.artifact_relative_path,
         warning: trained.hygiene.warning ?? null,
         baseRate: hygieneBaseRate,
-        weights: hygieneCoefficients
+        weights: hygieneCoefficients,
+        calibration: trained.hygiene.calibration ?? { method: "none" },
+        thresholds: {
+          classification: trained.hygiene.threshold?.threshold ?? 0.5,
+          precision: trained.hygiene.threshold?.precision ?? null,
+          recall: trained.hygiene.threshold?.recall ?? null,
+          f1: trained.hygiene.threshold?.f1 ?? null
+        }
       }
     }
   });
@@ -393,8 +461,45 @@ export async function trainRealModels(): Promise<TrainRealModelsSummary> {
         })
       : [];
 
+  const sendTimeRecommendationRows: Prisma.PredictionCreateManyInput[] = [];
+  if (Array.isArray(trained.send_time.contact_recommendations)) {
+    for (const recommendation of trained.send_time.contact_recommendations) {
+      const recommendedHour = Number(recommendation.recommended_hour);
+      const score = Number(recommendation.score);
+      const baselineScore = Number(recommendation.baseline_score);
+
+      if (
+        !recommendation.contact_id ||
+        !Number.isInteger(recommendedHour) ||
+        recommendedHour < 0 ||
+        recommendedHour >= 7 * 24 ||
+        !Number.isFinite(score) ||
+        !Number.isFinite(baselineScore)
+      ) {
+        continue;
+      }
+
+      sendTimeRecommendationRows.push({
+        modelVersionId: sendTimeVersion.id,
+        contactId: recommendation.contact_id,
+        targetType: "send_time_recommendation",
+        score,
+        payload: {
+          sourceModel: "send_time_real_v1",
+          recommendedHour,
+          baselineScore,
+          threshold: trained.send_time.threshold?.threshold ?? 0.5
+        }
+      });
+    }
+  }
+
   if (hygienePredictionRows.length > 0) {
     await prisma.prediction.createMany({ data: hygienePredictionRows });
+  }
+
+  if (sendTimeRecommendationRows.length > 0) {
+    await prisma.prediction.createMany({ data: sendTimeRecommendationRows });
   }
 
   return {
@@ -405,6 +510,8 @@ export async function trainRealModels(): Promise<TrainRealModelsSummary> {
       positiveRate: trained.send_time.positive_rate,
       status: trained.send_time.status,
       algorithm: trained.send_time.algorithm,
+      recommendationCount: sendTimeRecommendationRows.length,
+      threshold: trained.send_time.threshold?.threshold ?? 0.5,
       warning: trained.send_time.warning ?? null
     },
     hygiene: {
@@ -414,6 +521,7 @@ export async function trainRealModels(): Promise<TrainRealModelsSummary> {
       status: trained.hygiene.status,
       algorithm: trained.hygiene.algorithm,
       predictionCount: hygienePredictionRows.length,
+      threshold: trained.hygiene.threshold?.threshold ?? 0.5,
       warning: trained.hygiene.warning ?? null
     }
   };
