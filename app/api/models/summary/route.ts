@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getLatestHygieneModelVersion, getLatestSendTimeModelVersion } from "@/lib/model_versions";
 
 function safeDate(value: Date | null) {
   return value ? value.toISOString() : null;
@@ -90,14 +91,8 @@ function chooseOptimizerStatus(input: {
 export async function GET() {
   try {
     const [sendTime, hygiene] = await Promise.all([
-      prisma.modelVersion.findFirst({
-        where: { modelName: "send_time_v1" },
-        orderBy: { trainedAt: "desc" }
-      }),
-      prisma.modelVersion.findFirst({
-        where: { modelName: "hygiene_v1" },
-        orderBy: { trainedAt: "desc" }
-      })
+      getLatestSendTimeModelVersion(),
+      getLatestHygieneModelVersion()
     ]);
 
     const [
@@ -239,6 +234,7 @@ export async function GET() {
         sendTime: sendTime
           ? {
               id: sendTime.id,
+              modelName: sendTime.modelName,
               trainedAt: safeDate(sendTime.trainedAt),
               metrics: sendTime.metrics ?? null,
               metadata: sendTime.metadata ?? null,
@@ -272,6 +268,7 @@ export async function GET() {
         hygiene: hygiene
           ? {
               id: hygiene.id,
+              modelName: hygiene.modelName,
               trainedAt: safeDate(hygiene.trainedAt),
               metrics: hygiene.metrics ?? null,
               metadata: hygiene.metadata ?? null,

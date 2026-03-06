@@ -29,6 +29,7 @@ Optional:
 6. Generate synthetic data: `npm run data:generate`
 7. Start dev server: `npm run dev`
 8. Optional local scheduler for queued sends: `npm run dev:scheduler`
+9. Optional real-ML dependencies: `pip install -r scripts/ml/requirements.txt`
 
 ## Day‑one demo flow
 1. Settings -> connect Resend key (Sandbox).
@@ -46,7 +47,10 @@ Optional:
 
 ## ML + data pipeline
 - **Training**: `/api/jobs/train-models` persists ModelVersion metrics + predictions.
+- **Real ML training**: `/api/jobs/train-real-models` trains sklearn models and stores artifact paths in ModelVersion metadata.
+- **CLI real ML training**: `npm run ml:train-real`.
 - **Inference**: send-time optimizer uses per-contact/segment/global histograms with 24h cooldown.
+- **Hygiene guard inference**: flow/send hygiene checks prefer `hygiene_real_v1` when available, then fall back to `hygiene_v1`.
 - **Synthetic data**: deterministic generator feeds clicks + events for repeatable demos.
 
 ## Dev utilities
@@ -54,6 +58,7 @@ Use the Dev utilities page to run Sandbox workflows:
 - Create Test List
 - Send Test Broadcast
 - Train ML Models
+- Train Real ML Models
 - Poll Email Status
 - Hygiene Sweep
 
@@ -63,6 +68,7 @@ Use the Dev utilities page to run Sandbox workflows:
 - `npm run lint` — lint checks
 - `npm run test` — unit tests
 - `npm run data:generate` — deterministic synthetic data
+- `npm run ml:train-real` — run sklearn-based training and persist model versions
 
 ## Future features
 - One-click “Run Full Simulation” action (generate data → train models → send broadcast → poll outcomes → hygiene sweep).

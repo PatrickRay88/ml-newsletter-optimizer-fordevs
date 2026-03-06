@@ -13,6 +13,7 @@ import { ResendError } from "./resend";
 import { resolveEmailEngineAdapter } from "./engines/adapter";
 import { computeHygieneScore } from "./hygiene";
 import { buildHygieneFeatures, predictHygieneRisk } from "./hygiene_model";
+import { getLatestHygieneModelVersion } from "./model_versions";
 
 const SCHEDULE_THRESHOLD_MS = 5 * 60 * 1000;
 
@@ -499,10 +500,7 @@ async function evaluateFlowHygiene(contactId: string, now: Date) {
         }
       }
     }),
-    prisma.modelVersion.findFirst({
-      where: { modelName: "hygiene_v1" },
-      orderBy: { trainedAt: "desc" }
-    })
+    getLatestHygieneModelVersion()
   ]);
 
   if (!contact) {

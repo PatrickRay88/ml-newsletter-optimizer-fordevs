@@ -23,6 +23,7 @@ type Decision = {
 
 type ModelSummary = {
   id: string;
+  modelName?: string;
   trainedAt: string | null;
   metrics: unknown;
   metadata: unknown;
@@ -188,7 +189,7 @@ export default function DevUtilitiesPage() {
         if (key.includes("broadcast")) {
           void fetchDecisions();
         }
-        if (key.includes("train-models")) {
+        if (key.includes("train-models") || key.includes("train-real-models")) {
           void fetchModelSummary();
         }
       } catch (error) {
@@ -245,6 +246,12 @@ export default function DevUtilitiesPage() {
         description: "Recompute send-time histograms and hygiene risk model.",
         onClick: () => runPost("train-models", "/api/jobs/train-models"),
         walkthroughKey: "dev-train-models"
+      },
+      {
+        key: "train-real-models",
+        label: "Train Real ML Models",
+        description: "Train sklearn models from pooled outcomes and persist artifacts + model versions.",
+        onClick: () => runPost("train-real-models", "/api/jobs/train-real-models")
       },
       {
         key: "process-flows",
@@ -384,6 +391,7 @@ export default function DevUtilitiesPage() {
                   <div style={{ marginTop: "0.4rem", color: "#cbd5f5", fontSize: "0.9rem" }}>
                     {entry.key === "sendTime" ? (
                       <>
+                        <div>Model family: {model?.modelName ?? "—"}</div>
                         <div>
                           Status: {model?.pooledPerformance ? statusLabel(model.pooledPerformance.status) : "—"}
                         </div>
@@ -414,6 +422,7 @@ export default function DevUtilitiesPage() {
                       </>
                     ) : (
                       <>
+                        <div>Model family: {model?.modelName ?? "—"}</div>
                         <div>Predictions: {model?.predictionCount ?? 0}</div>
                         <div>Contact samples: {model?.sampleCount ?? 0}</div>
                       </>
